@@ -48,5 +48,5 @@ The project is written in **C++17** using **Raylib** for rendering and **CMake**
 ### Build Steps (Terminal / CLion)
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/YOUR_USERNAME/MechanicsEngine.git](https://github.com/YOUR_USERNAME/MechanicsEngine.git)
+   git clone [https://github.com/jandelarge/MechanicsEngine](https://github.com/jandelarge/MechanicsEngine)
    cd MechanicsEngine
