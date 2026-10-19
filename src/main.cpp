@@ -5,33 +5,33 @@
 
 int main() {
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
-    InitWindow(1280, 760, "Симулятор механики");
-    SetTargetFPS(60);
+    InitWindow(1320, 780, "Собака ебака");
+    //Image icon = LoadImage("path/to/your_icon.png");
+    //if (icon.data != NULL) {
+        //SetWindowIcon(icon);
+        //UnloadImage(icon);
+    //}
+    SetWindowMinSize(960, 600);
+    SetTargetFPS(120);
 
     PhysicsWorld world;
-    world.groundY = 0.5f;
-
-    int anchorId = world.createBody({0.0f, 7.5f}, 3.5f, 0.2f, 0.0f, true);
-    int hangingId = world.createBody({0.0f, 4.0f}, 1.3f, 1.3f, 5.0f, false);
-    int freeId = world.createBody({-3.2f, 1.0f}, 1.0f, 1.0f, 2.0f, false);
-
-    world.addRope(anchorId, hangingId, {0.0f, 0.0f}, {0.0f, 0.65f}, 2.4f, 120.0f);
-    world.updateForces();
+    world.setupDefaultScene();
 
     Renderer renderer;
     renderer.init();
 
     AppState state;
+    state.paused = true;
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
-        if (dt > 0.033f) dt = 0.033f;
+        if (dt > 0.025f) dt = 0.025f;
 
-        InputHandler::update(world, state, GetScreenWidth(), GetScreenHeight(), renderer.ppm, hangingId, freeId);
+        InputHandler::update(world, state, GetScreenWidth(), GetScreenHeight(), renderer.ppm);
 
         if (!state.paused) {
             Vec2 targetPos = state.mouseWorldPos + state.dragOffset;
-            world.step(dt, state.draggedBodyId, targetPos);
+            world.step(dt, state.draggedBodyId, targetPos, state.draggedFreeRopeId);
         }
 
         renderer.draw(world, state);

@@ -3,25 +3,70 @@
 #include "Rope.hpp"
 #include <vector>
 
-class PhysicsWorld {
-public:
-    const float G = 9.81f;
+struct ContactConstraint {
+    int idA = -1; // -1 = пол
+    int idB = -1;
+    Vec2 point = {0.0f, 0.0f};
+    Vec2 normal = {0.0f, 1.0f};
+    Vec2 tangent = {1.0f, 0.0f};
+    Vec2 rA = {0.0f, 0.0f};
+    Vec2 rB = {0.0f, 0.0f};
+    float penetration = 0.0f;
+    float effMassN = 0.0f;
+    float effMassT = 0.0f;
+    float friction = 0.5f;
+    float jnAccum = 0.0f;
+    float jtAccum = 0.0f;
+};
+
+struct WorldSnapshot {
     std::vector<Body> bodies;
     std::vector<RopeLink> ropes;
+    bool valid = false;
+};
+
+class PhysicsWorld {
+public:
+    float G = 9.81f;
+    int substeps = 24;
+
+    std::vector<Body> bodies;
+    std::vector<RopeLink> ropes;
+    WorldSnapshot snapshot;
 
     float groundY = 0.5f;
-    float worldHalfWidth = 8.5f;
-    float worldTopY = 9.0f;
+    float leftWallX = -8.0f;
+    float rightWallX = 6.0f;
+    float ceilingY = 9.0f;
 
     int createBody(Vec2 pos, float w, float h, float mass, bool isStatic = false);
-    int addRope(int idA, int idB, Vec2 offA, Vec2 offB, float length, float stiffness = 120.0f);
+    int addRope(int idA, int idB, Vec2 offA, Vec2 offB, float length, float stiffness = 180.0f, bool isRigid = false);
+    int addFreeRope(int idA, Vec2 offA, Vec2 endWorldPos, float length, float stiffness = 180.0f, bool isRigid = false);
 
-    void resetDefaultScene(int hangingId, int freeId);
-    void step(float dt, int draggedId, const Vec2& targetBodyPos);
-    void updateForces();
+    Vec2 findSafeSpawnPos(Vec2 desiredPos, float w, float h) const;
+    bool tryAttachBodyToFreeRopes(int bodyId);
+    void syncRopeLengthToAttachedBody(int ropeId);
+    void resolveEditorOverlap(int draggedId);
+
+    void removeBody(int id);
+    void removeRope(int id);
+    void clearScene();
+    void setupDefaultScene();
+
+    void saveSnapshot();
+    void restoreSnapshot();
+
+    void step(float dt, int draggedBodyId, const Vec2& targetBodyPos, int draggedFreeRopeId = -1);
+    void updateStaticTelemetry();
+
+    Vec2 getSnapOffset(int bodyId, const Vec2& worldClick) const;
+    Vec2 getRopeEndWorldPos(const RopeLink& r) const;
 
 private:
-    void solveRopes(float subDt, int draggedId);
-    void solveCollisions(float subDt, int draggedId);
-    void enforceHardLimits(int draggedId);
+    std::vector<ContactConstraint> contacts;
+
+    void buildContacts();
+    void solveVelocityConstraints(float subDt, std::vector<float>& ropeImpulseAccum);
+    void solvePositionConstraints(int pinnedId = -1);
+    void enforceBoundaries();
 };

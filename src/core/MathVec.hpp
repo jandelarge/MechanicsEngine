@@ -26,10 +26,17 @@ struct Vec2 {
         return (l > 1e-6f) ? (*this / l) : Vec2(0.0f, 0.0f);
     }
 
+    Vec2 rotated(float angleRad) const {
+        float c = std::cos(angleRad);
+        float s = std::sin(angleRad);
+        return {x * c - y * s, x * s + y * c};
+    }
+
     static float dot(const Vec2& a, const Vec2& b) { return a.x * b.x + a.y * b.y; }
+    static float cross(const Vec2& a, const Vec2& b) { return a.x * b.y - a.y * b.x; }
+    static Vec2 cross(float w, const Vec2& r) { return {-w * r.y, w * r.x}; }
     static float dist(const Vec2& a, const Vec2& b) { return (a - b).length(); }
 
-    // Расстояние от точки P до отрезка AB (для наведения мыши на трос)
     static float distToSegment(const Vec2& p, const Vec2& a, const Vec2& b) {
         Vec2 ab = b - a;
         Vec2 ap = p - a;

@@ -1,17 +1,71 @@
 #pragma once
 #include "physics/PhysicsWorld.hpp"
+#include "raylib.h"
+#include <string>
+
+enum class ToolType {
+    SELECT_MOVE = 0,
+    ADD_BLOCK,
+    ADD_SUPPORT,
+    ADD_ROPE,
+    DELETE_OBJ
+};
+
+enum class EditField {
+    NONE = 0,
+    BODY_MASS,
+    BODY_FRICTION,
+    BODY_WIDTH,
+    BODY_HEIGHT,
+    SUPPORT_X,
+    SUPPORT_Y,
+    SUPPORT_WIDTH,
+    ROPE_LENGTH,
+    ROPE_STIFFNESS,
+    WORLD_GRAVITY,
+    WORLD_SUBSTEPS,
+    NEW_ROPE_LENGTH
+};
 
 struct AppState {
-    bool paused = false;
-    bool showAllForces = false;
+    bool paused = true;
+    int forceViewMode = 0; // 0: при наведении, 1: все, 2: скрыты
+
+    ToolType activeTool = ToolType::SELECT_MOVE;
+
+    int selectedBodyId = -1;
+    int selectedRopeId = -1;
+
     int hoveredBodyId = -1;
     int hoveredRopeId = -1;
+    int hoveredDockBtn = -1;
+
     int draggedBodyId = -1;
+    int draggedFreeRopeId = -1;
+
+    int ropeStartBodyId = -1;
+    Vec2 ropeStartOffset = {0.0f, 0.0f};
+    float newRopeDefaultLength = 2.2f;
+
     Vec2 mouseWorldPos = {0.0f, 0.0f};
     Vec2 dragOffset = {0.0f, 0.0f};
+
+    EditField editingField = EditField::NONE;
+    std::string inputBuffer = "";
 };
 
 class InputHandler {
 public:
-    static void update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm, int hangingId, int freeId);
+    static const int INSPECTOR_WIDTH = 300;
+
+    static Rectangle getDockRect(int screenH);
+    static Rectangle getDockButtonRect(int index, int screenH);
+
+    static void update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm);
+    static void commitEditField(PhysicsWorld& world, AppState& state);
+
+private:
+    static bool handleDock(PhysicsWorld& world, AppState& state, int screenH);
+    static void handleInspector(PhysicsWorld& world, AppState& state, int screenW, int screenH);
+    static void handleKeyboardInput(PhysicsWorld& world, AppState& state);
 };
