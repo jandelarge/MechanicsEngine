@@ -8,7 +8,7 @@
 
 The simulator allows you to seamlessly build physical setups using blocks, supports, and ropes, and directly observe how forces interact dynamically.
 
-> <img width="1918" height="1006" alt="image" src="https://github.com/user-attachments/assets/8d823dae-05db-4259-82a7-7819c350eefd" /
+<img width="1918" height="1006" alt="image" src="https://github.com/user-attachments/assets/8d823dae-05db-4259-82a7-7819c350eefd" />
 
 
 ---
