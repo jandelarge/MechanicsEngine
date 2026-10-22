@@ -12,7 +12,7 @@ int main() {
         //UnloadImage(icon);
     //}
     SetWindowMinSize(960, 600);
-    SetTargetFPS(120);
+    SetTargetFPS(60);
 
     PhysicsWorld world;
     world.setupDefaultScene();
