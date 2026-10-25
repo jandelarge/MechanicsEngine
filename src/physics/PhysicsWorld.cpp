@@ -4,7 +4,7 @@
 
 struct OBBManifold {
     bool hit = false;
-    Vec2 normal = {0.0f, 1.0f};
+    Vec2 normal = {0.0f, 1.0f}; // Всегда направлен от тела A к телу B
     float depth = 0.0f;
     Vec2 points[2];
     int pointCount = 0;
@@ -63,7 +63,7 @@ static void GetSupportEdge(const Body& b, const Vec2& dir, Vec2 outEdge[2]) {
     }
 }
 
-static OBBManifold CollideOBB(const Body& a, const Body& b, float margin = 0.003f) {
+static OBBManifold CollideOBB(const Body& a, const Body& b, float margin) {
     OBBManifold m;
     Vec2 axes[4] = {a.axisX(), a.axisY(), b.axisX(), b.axisY()};
 
@@ -129,6 +129,93 @@ static OBBManifold CollideOBB(const Body& a, const Body& b, float margin = 0.003
     return m;
 }
 
+static OBBManifold CollideCircleCircle(const Body& a, const Body& b, float margin) {
+    OBBManifold m;
+    Vec2 d = b.pos - a.pos;
+    float distSq = d.lengthSq();
+    float rSum = a.radius + b.radius;
+
+    if (distSq > (rSum + margin) * (rSum + margin)) return m;
+
+    float dist = std::sqrt(distSq);
+    m.hit = true;
+    m.pointCount = 1;
+
+    if (dist > 1e-5f) {
+        m.normal = d / dist; // От A к B
+        m.depth = std::max(0.0f, rSum - dist);
+        m.points[0] = a.pos + m.normal * (a.radius - m.depth * 0.5f);
+    } else {
+        m.normal = {0.0f, 1.0f};
+        m.depth = rSum;
+        m.points[0] = a.pos;
+    }
+    return m;
+}
+
+// Возвращает манифолд, где normal направлен от circle (A) к obb (B)
+static OBBManifold CollideCircleOBB(const Body& circle, const Body& obb, float margin) {
+    OBBManifold m;
+    Vec2 localC = obb.worldToLocal(circle.pos);
+    float hx = obb.width * 0.5f;
+    float hy = obb.height * 0.5f;
+
+    Vec2 closest = {
+        std::clamp(localC.x, -hx, hx),
+        std::clamp(localC.y, -hy, hy)
+    };
+
+    Vec2 dLocal = closest - localC; // Вектор от центра шара к ближайшей точке OBB
+    float distSq = dLocal.lengthSq();
+
+    if (distSq > 1e-8f) {
+        if (distSq > (circle.radius + margin) * (circle.radius + margin)) return m;
+        float dist = std::sqrt(distSq);
+        Vec2 localNormal = dLocal / dist;
+
+        m.hit = true;
+        m.normal = localNormal.rotated(obb.angle);
+        m.depth = std::max(0.0f, circle.radius - dist);
+        m.pointCount = 1;
+        m.points[0] = obb.localToWorld(closest);
+    } else {
+        // Центр шара попал внутрь коробки: ищем ближайшую грань (с учётом реальных размеров hx, hy)
+        float dx = hx - std::abs(localC.x);
+        float dy = hy - std::abs(localC.y);
+        Vec2 localNormal;
+
+        if (dx < dy) {
+            localNormal = {(localC.x >= 0.0f) ? -1.0f : 1.0f, 0.0f};
+            closest.x = (localC.x >= 0.0f) ? hx : -hx;
+            m.depth = circle.radius + dx;
+        } else {
+            localNormal = {0.0f, (localC.y >= 0.0f) ? -1.0f : 1.0f};
+            closest.y = (localC.y >= 0.0f) ? hy : -hy;
+            m.depth = circle.radius + dy;
+        }
+
+        m.hit = true;
+        m.normal = localNormal.rotated(obb.angle);
+        m.pointCount = 1;
+        m.points[0] = obb.localToWorld(closest);
+    }
+
+    return m;
+}
+
+static OBBManifold CollideBodies(const Body& a, const Body& b, float margin = 0.004f) {
+    if (a.shape == ShapeType::CIRCLE && b.shape == ShapeType::CIRCLE) {
+        return CollideCircleCircle(a, b, margin);
+    } else if (a.shape == ShapeType::CIRCLE && b.shape == ShapeType::BOX) {
+        return CollideCircleOBB(a, b, margin);
+    } else if (a.shape == ShapeType::BOX && b.shape == ShapeType::CIRCLE) {
+        OBBManifold m = CollideCircleOBB(b, a, margin);
+        if (m.hit) m.normal = m.normal * -1.0f; // Разворачиваем нормаль, чтобы шла от A (Box) к B (Circle)
+        return m;
+    }
+    return CollideOBB(a, b, margin);
+}
+
 int PhysicsWorld::createBody(Vec2 pos, float w, float h, float mass, bool isStatic) {
     int id = (int)bodies.size();
     bodies.emplace_back(id, pos, w, h, mass, isStatic);
@@ -144,8 +231,10 @@ int PhysicsWorld::createCircle(Vec2 pos, float radius, float mass, bool isStatic
     b.width = radius * 2.0f;
     b.height = radius * 2.0f;
     b.mass = mass;
+    b.friction = 0.5f;
+    b.restitution = 0.35f; // Приятный упругий отскок для шара
     b.isStatic = isStatic;
-    b.name = "ЛИЖИ МОИ ЯЙЦА";
+    b.name = "Шар";
     b.updateMassData();
     bodies.push_back(b);
     return b.id;
@@ -190,7 +279,7 @@ Vec2 PhysicsWorld::findSafeSpawnPos(Vec2 desiredPos, float w, float h) const {
     for (int iter = 0; iter < 30; ++iter) {
         bool overlapped = false;
         for (const auto& b : bodies) {
-            OBBManifold m = CollideOBB(b, temp, -0.002f);
+            OBBManifold m = CollideBodies(b, temp, -0.002f);
             if (m.hit && m.depth > 0.001f) {
                 if (!b.isStatic && std::abs(temp.pos.x - b.pos.x) < b.width * 0.35f && std::abs(b.angle) < 0.05f) {
                     temp.pos.x = b.pos.x;
@@ -217,8 +306,16 @@ bool PhysicsWorld::tryAttachBodyToFreeRopes(int bodyId) {
         if (r.idB == -1 && r.idA != bodyId) {
             Vec2 localHook = b.worldToLocal(r.freePos);
             float margin = 0.35f;
-            if (std::abs(localHook.x) <= b.width * 0.5f + margin &&
-                std::abs(localHook.y) <= b.height * 0.5f + margin) {
+
+            bool inside = false;
+            if (b.shape == ShapeType::CIRCLE) {
+                inside = (localHook.length() <= b.radius + margin);
+            } else {
+                inside = (std::abs(localHook.x) <= b.width * 0.5f + margin &&
+                          std::abs(localHook.y) <= b.height * 0.5f + margin);
+            }
+
+            if (inside) {
                 r.idB = bodyId;
                 r.offsetB = getSnapOffset(bodyId, r.freePos);
                 b.pos = r.freePos - r.offsetB.rotated(b.angle);
@@ -252,8 +349,10 @@ void PhysicsWorld::syncRopeLengthToAttachedBody(int ropeId) {
         b.pos = newPB - r.offsetB.rotated(b.angle);
         b.vel = {0.0f, 0.0f};
         b.angVel = 0.0f;
-        if (b.pos.y - b.height * 0.5f < groundY) {
-            b.pos.y = groundY + b.height * 0.5f;
+
+        float hY = (b.shape == ShapeType::CIRCLE) ? b.radius : (b.height * 0.5f);
+        if (b.pos.y - hY < groundY) {
+            b.pos.y = groundY + hY;
         }
     }
     updateStaticTelemetry();
@@ -274,9 +373,7 @@ void PhysicsWorld::removeBody(int id) {
 
     bodies.erase(bodies.begin() + id);
 
-    for (int i = 0; i < (int)bodies.size(); ++i) {
-        bodies[i].id = i;
-    }
+    for (int i = 0; i < (int)bodies.size(); ++i) bodies[i].id = i;
     for (int i = 0; i < (int)ropes.size(); ++i) {
         ropes[i].id = i;
         if (ropes[i].idA > id) ropes[i].idA--;
@@ -288,9 +385,7 @@ void PhysicsWorld::removeBody(int id) {
 void PhysicsWorld::removeRope(int id) {
     if (id < 0 || id >= (int)ropes.size()) return;
     ropes.erase(ropes.begin() + id);
-    for (int i = 0; i < (int)ropes.size(); ++i) {
-        ropes[i].id = i;
-    }
+    for (int i = 0; i < (int)ropes.size(); ++i) ropes[i].id = i;
     updateStaticTelemetry();
 }
 
@@ -335,6 +430,11 @@ Vec2 PhysicsWorld::getSnapOffset(int bodyId, const Vec2& worldClick) const {
     const Body& b = bodies[bodyId];
     Vec2 local = b.worldToLocal(worldClick);
 
+    if (b.shape == ShapeType::CIRCLE) {
+        if (local.length() < b.radius * 0.35f) return {0.0f, 0.0f}; // Привязка к центру шара
+        return local.normalized() * b.radius;                        // Привязка к краю шара
+    }
+
     if (b.isStatic) {
         float clampedX = std::clamp(local.x, -b.width * 0.48f, b.width * 0.48f);
         return {clampedX, 0.0f};
@@ -372,37 +472,37 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
     std::vector<float> frameRopeTensionSum(ropes.size(), 0.0f);
 
     for (int s = 0; s < steps; ++s) {
-        // 1. Затухание скорости и внешние силы
         for (auto& b : bodies) {
             if (b.isStatic) continue;
 
             float speed = b.vel.length();
-            float airDrag = 0.08f + 0.03f * speed;
-            b.vel *= std::max(0.0f, 1.0f - airDrag * subDt);
-            b.angVel *= std::max(0.0f, 1.0f - 1.2f * subDt);
+            float airDrag = 0.05f + 0.02f * speed;
+            // У шара в воздухе вращение почти не гасится, чтобы он крутился естественно
+            float rotDrag = (b.shape == ShapeType::CIRCLE) ? 0.05f : 1.0f;
 
+            b.vel *= std::max(0.0f, 1.0f - airDrag * subDt);
+            b.angVel *= std::max(0.0f, 1.0f - rotDrag * subDt);
             b.vel.y -= G * subDt;
 
             if (b.id == draggedBodyId) {
                 Vec2 err = targetBodyPos - b.pos;
                 Vec2 desiredVel = err * 24.0f;
-                float maxMouseSpeed = 10.0f;
+                float maxMouseSpeed = 12.0f;
                 if (desiredVel.length() > maxMouseSpeed) {
                     desiredVel = desiredVel.normalized() * maxMouseSpeed;
                 }
 
                 Vec2 reqAcc = (desiredVel - b.vel) / subDt;
                 Vec2 mouseForce = reqAcc * b.mass;
-                float maxForce = std::max(150.0f, b.mass * G * 3.5f);
+                float maxForce = std::max(180.0f, b.mass * G * 4.0f);
                 if (mouseForce.length() > maxForce) {
                     mouseForce = mouseForce.normalized() * maxForce;
                 }
                 b.vel += mouseForce * (b.invMass * subDt);
-                b.angVel *= 0.8f;
+                b.angVel *= 0.92f;
             }
         }
 
-        // 2. Упругие тросы с плечом силы и моментом инерции
         for (size_t i = 0; i < ropes.size(); ++i) {
             RopeLink& r = ropes[i];
             Body& a = bodies[r.idA];
@@ -477,7 +577,6 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
             }
         }
 
-        // 3. Построение точных OBB-контактов и решение импульсов с вращательной инерцией
         buildContacts();
         std::vector<float> ropeRigidImp(ropes.size(), 0.0f);
         solveVelocityConstraints(subDt, ropeRigidImp);
@@ -488,7 +587,6 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
             }
         }
 
-        // 4. Интегрирование координат и углов
         for (auto& b : bodies) {
             if (!b.isStatic) {
                 b.pos += b.vel * subDt;
@@ -501,12 +599,20 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
             }
         }
 
-        // 5. Полное позиционное выталкивание OBB без проникновения в текстуры
         solvePositionConstraints(-1);
         enforceBoundaries();
 
-        // Накопление импульсов для вывода честных сил
+        // Трение качения для шаров при контакте с опорой + сбор телеметрии
         for (const auto& c : contacts) {
+            if (c.jnAccum > 1e-6f) {
+                if (c.idA >= 0 && bodies[c.idA].shape == ShapeType::CIRCLE && !bodies[c.idA].isStatic) {
+                    bodies[c.idA].angVel *= std::max(0.0f, 1.0f - 0.35f * subDt);
+                }
+                if (c.idB >= 0 && bodies[c.idB].shape == ShapeType::CIRCLE && !bodies[c.idB].isStatic) {
+                    bodies[c.idB].angVel *= std::max(0.0f, 1.0f - 0.35f * subDt);
+                }
+            }
+
             if (c.idA == -1) {
                 frameNormalImp[c.idB] += c.jnAccum;
                 frameFrictionImp[c.idB] += std::abs(c.jtAccum);
@@ -547,8 +653,13 @@ void PhysicsWorld::buildContacts() {
         Body* a = (c.idA >= 0) ? &bodies[c.idA] : nullptr;
         Body& b = bodies[c.idB];
 
-        c.rA = a ? (c.point - a->pos) : Vec2{0.0f, 0.0f};
-        c.rB = c.point - b.pos;
+        // Для круга плечо силы всегда строго вдоль нормали на расстоянии радиуса
+        if (a) {
+            c.rA = (a->shape == ShapeType::CIRCLE) ? (c.normal * a->radius) : (c.point - a->pos);
+        } else {
+            c.rA = {0.0f, 0.0f};
+        }
+        c.rB = (b.shape == ShapeType::CIRCLE) ? (c.normal * (-b.radius)) : (c.point - b.pos);
 
         float wA = a ? a->invMass : 0.0f;
         float iA = a ? a->invInertia : 0.0f;
@@ -564,40 +675,72 @@ void PhysicsWorld::buildContacts() {
         float rtB = Vec2::cross(c.rB, c.tangent);
         float kT = wA + wB + iA * rtA * rtA + iB * rtB * rtB;
         c.effMassT = (kT > 1e-6f) ? (1.0f / kT) : 0.0f;
+
+        Vec2 vA = a ? (a->vel + Vec2::cross(a->angVel, c.rA)) : Vec2{0.0f, 0.0f};
+        Vec2 vB = b.vel + Vec2::cross(b.angVel, c.rB);
+        float vn = Vec2::dot(vB - vA, c.normal);
+
+        if (vn < -0.65f) {
+            c.restitutionVel = -c.restitution * vn;
+        } else {
+            c.restitutionVel = 0.0f;
+        }
     };
 
-    // 1. Точные контакты углов повернутого бруска с полом
+    // 1. Контакты с полом
     for (const auto& b : bodies) {
         if (b.isStatic) continue;
-        auto verts = b.getVertices();
-        for (int k = 0; k < 4; ++k) {
-            if (verts[k].y <= groundY + MARGIN) {
+
+        if (b.shape == ShapeType::CIRCLE) {
+            if (b.pos.y - b.radius <= groundY + MARGIN) {
                 ContactConstraint c;
                 c.idA = -1;
                 c.idB = b.id;
-                c.point = verts[k];
+                c.point = {b.pos.x, groundY};
                 c.normal = {0.0f, 1.0f};
                 c.tangent = {1.0f, 0.0f};
-                c.penetration = std::max(0.0f, groundY - verts[k].y);
+                c.penetration = std::max(0.0f, groundY - (b.pos.y - b.radius));
                 c.friction = b.friction;
+                c.restitution = b.restitution;
                 initContactMasses(c);
                 contacts.push_back(c);
+            }
+        } else {
+            auto verts = b.getVertices();
+            for (int k = 0; k < 4; ++k) {
+                if (verts[k].y <= groundY + MARGIN) {
+                    ContactConstraint c;
+                    c.idA = -1;
+                    c.idB = b.id;
+                    c.point = verts[k];
+                    c.normal = {0.0f, 1.0f};
+                    c.tangent = {1.0f, 0.0f};
+                    c.penetration = std::max(0.0f, groundY - verts[k].y);
+                    c.friction = b.friction;
+                    c.restitution = b.restitution;
+                    initContactMasses(c);
+                    contacts.push_back(c);
+                }
             }
         }
     }
 
-    // точные контакты между повернутыми брусками и опорами
+    // 2. Контакты между телами
     for (size_t i = 0; i < bodies.size(); ++i) {
         for (size_t j = i + 1; j < bodies.size(); ++j) {
             const Body& a = bodies[i];
             const Body& b = bodies[j];
             if (a.isStatic && b.isStatic) continue;
 
-            OBBManifold m = CollideOBB(a, b, MARGIN);
+            OBBManifold m = CollideBodies(a, b, MARGIN);
             if (!m.hit) continue;
 
             Vec2 tangent = {-m.normal.y, m.normal.x};
-            float mu = std::min(a.friction, b.friction);
+            // Для пары с кругом берем среднее геометрическое трения, чтобы шар хорошо цеплялся за опору
+            float mu = (a.shape == ShapeType::CIRCLE || b.shape == ShapeType::CIRCLE)
+                     ? std::sqrt(a.friction * b.friction)
+                     : std::min(a.friction, b.friction);
+            float rest = std::max(a.restitution, b.restitution);
 
             for (int k = 0; k < m.pointCount; ++k) {
                 ContactConstraint c;
@@ -608,6 +751,7 @@ void PhysicsWorld::buildContacts() {
                 c.tangent = tangent;
                 c.penetration = m.depth;
                 c.friction = mu;
+                c.restitution = rest;
                 initContactMasses(c);
                 contacts.push_back(c);
             }
@@ -619,7 +763,6 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
     const int SOLVER_ITERS = 14;
 
     for (int iter = 0; iter < SOLVER_ITERS; ++iter) {
-        // жесткие нити
         for (size_t i = 0; i < ropes.size(); ++i) {
             RopeLink& r = ropes[i];
             if (r.idB == -1) continue;
@@ -649,7 +792,7 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
             float vn = Vec2::dot(vB - vA, n);
 
             float stretchErr = std::max(0.0f, dist - limitLen);
-            float bias = (stretchErr * 0.25f) / subDt;
+            float bias = (stretchErr * 0.15f) / subDt;
 
             float dLambda = (vn + bias) / totalW;
             float newImp = std::max(0.0f, ropeImpulseAccum[i] + dLambda);
@@ -667,7 +810,6 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
             }
         }
 
-        // контакты с учетом плеча силы rA, rB и момента инерции I
         for (auto& c : contacts) {
             Body* a = (c.idA >= 0) ? &bodies[c.idA] : nullptr;
             Body& b = bodies[c.idB];
@@ -681,12 +823,12 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
             Vec2 vB = b.vel + Vec2::cross(b.angVel, c.rB);
             Vec2 vRel = vB - vA;
 
-            // Нормальный импульс
             float vn = Vec2::dot(vRel, c.normal);
-            float slop = 0.0015f;
-            float bias = (std::max(0.0f, c.penetration - slop) * 0.25f) / subDt;
+            // Не подбрасываем покоящиеся тела: используем отскок при ударе, а перекрытие плавно решает позиционный солвер
+            float posBias = (std::max(0.0f, c.penetration - 0.006f) * 0.05f) / subDt;
+            float targetVn = std::max(c.restitutionVel, posBias);
 
-            float dJn = (-vn + bias) * c.effMassN;
+            float dJn = (-vn + targetVn) * c.effMassN;
             float newJn = std::max(0.0f, c.jnAccum + dJn);
             dJn = newJn - c.jnAccum;
             c.jnAccum = newJn;
@@ -701,7 +843,7 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
                 b.angVel += Vec2::cross(c.rB, impN) * iB;
             }
 
-            // Импульс трения Кулона
+            // Импульс трения Кулона (именно он раскручивает шар при качении!)
             vA = a ? (a->vel + Vec2::cross(a->angVel, c.rA)) : Vec2{0.0f, 0.0f};
             vB = b.vel + Vec2::cross(b.angVel, c.rB);
             vRel = vB - vA;
@@ -731,27 +873,32 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
     const float SLOP = 0.0005f;
 
     for (int iter = 0; iter < POS_ITERS; ++iter) {
-        // пол
         for (auto& b : bodies) {
             if (b.isStatic) continue;
-            auto verts = b.getVertices();
-            float minY = verts[0].y;
-            for (int k = 1; k < 4; ++k) {
-                if (verts[k].y < minY) minY = verts[k].y;
-            }
-            if (minY < groundY) {
-                b.pos.y += (groundY - minY);
+
+            if (b.shape == ShapeType::CIRCLE) {
+                if (b.pos.y - b.radius < groundY) {
+                    b.pos.y = groundY + b.radius;
+                }
+            } else {
+                auto verts = b.getVertices();
+                float minY = verts[0].y;
+                for (int k = 1; k < 4; ++k) {
+                    if (verts[k].y < minY) minY = verts[k].y;
+                }
+                if (minY < groundY) {
+                    b.pos.y += (groundY - minY);
+                }
             }
         }
 
-        // раздвижение пересекающихся брусков (анти ноуклип)
         for (size_t i = 0; i < bodies.size(); ++i) {
             for (size_t j = i + 1; j < bodies.size(); ++j) {
                 Body& a = bodies[i];
                 Body& b = bodies[j];
                 if (a.isStatic && b.isStatic) continue;
 
-                OBBManifold m = CollideOBB(a, b, 0.0f);
+                OBBManifold m = CollideBodies(a, b, 0.0f);
                 if (!m.hit || m.depth <= SLOP) continue;
 
                 float wA = (a.isStatic || a.id == pinnedId) ? 0.0f : a.invMass;
@@ -759,13 +906,12 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
                 float totalW = wA + wB;
                 if (totalW <= 1e-6f) continue;
 
-                Vec2 corr = m.normal * ((m.depth - SLOP) * 0.8f / totalW);
+                Vec2 corr = m.normal * ((m.depth - SLOP) * 0.75f / totalW);
                 a.pos -= corr * wA;
                 b.pos += corr * wB;
             }
         }
 
-        // ограничение длины нитей
         for (auto& r : ropes) {
             if (r.idB == -1) continue;
             Body& a = bodies[r.idA];
@@ -799,32 +945,40 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
 void PhysicsWorld::enforceBoundaries() {
     for (auto& b : bodies) {
         if (b.isStatic) continue;
-        auto verts = b.getVertices();
 
-        float minX = verts[0].x, maxX = verts[0].x;
-        float minY = verts[0].y, maxY = verts[0].y;
-        for (int i = 1; i < 4; ++i) {
-            minX = std::min(minX, verts[i].x);
-            maxX = std::max(maxX, verts[i].x);
-            minY = std::min(minY, verts[i].y);
-            maxY = std::max(maxY, verts[i].y);
+        float minX, maxX, minY, maxY;
+        if (b.shape == ShapeType::CIRCLE) {
+            minX = b.pos.x - b.radius;
+            maxX = b.pos.x + b.radius;
+            minY = b.pos.y - b.radius;
+            maxY = b.pos.y + b.radius;
+        } else {
+            auto verts = b.getVertices();
+            minX = verts[0].x; maxX = verts[0].x;
+            minY = verts[0].y; maxY = verts[0].y;
+            for (int i = 1; i < 4; ++i) {
+                minX = std::min(minX, verts[i].x);
+                maxX = std::max(maxX, verts[i].x);
+                minY = std::min(minY, verts[i].y);
+                maxY = std::max(maxY, verts[i].y);
+            }
         }
 
         if (minY < groundY) {
             b.pos.y += (groundY - minY);
-            if (b.vel.y < 0.0f) b.vel.y = 0.0f;
+            if (b.vel.y < 0.0f) b.vel.y = -b.vel.y * b.restitution;
         }
         if (maxY > ceilingY) {
             b.pos.y -= (maxY - ceilingY);
-            if (b.vel.y > 0.0f) b.vel.y = 0.0f;
+            if (b.vel.y > 0.0f) b.vel.y = -b.vel.y * b.restitution;
         }
         if (minX < leftWallX) {
             b.pos.x += (leftWallX - minX);
-            if (b.vel.x < 0.0f) b.vel.x = 0.0f;
+            if (b.vel.x < 0.0f) b.vel.x = -b.vel.x * b.restitution;
         }
         if (maxX > rightWallX) {
             b.pos.x -= (maxX - rightWallX);
-            if (b.vel.x > 0.0f) b.vel.x = 0.0f;
+            if (b.vel.x > 0.0f) b.vel.x = -b.vel.x * b.restitution;
         }
     }
 }
@@ -841,8 +995,14 @@ void PhysicsWorld::updateStaticTelemetry() {
     for (auto& b : bodies) {
         if (b.isStatic) continue;
 
-        auto verts = b.getVertices();
-        float minY = std::min({verts[0].y, verts[1].y, verts[2].y, verts[3].y});
+        float minY;
+        if (b.shape == ShapeType::CIRCLE) {
+            minY = b.pos.y - b.radius;
+        } else {
+            auto verts = b.getVertices();
+            minY = std::min({verts[0].y, verts[1].y, verts[2].y, verts[3].y});
+        }
+
         if (minY <= groundY + EPS) {
             b.supportedBy = -2;
             continue;
@@ -850,7 +1010,7 @@ void PhysicsWorld::updateStaticTelemetry() {
 
         for (const auto& other : bodies) {
             if (other.id == b.id || other.isStatic) continue;
-            OBBManifold m = CollideOBB(other, b, EPS);
+            OBBManifold m = CollideBodies(other, b, EPS);
             if (m.hit && m.normal.y > 0.5f) {
                 b.supportedBy = other.id;
                 break;

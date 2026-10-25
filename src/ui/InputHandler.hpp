@@ -3,7 +3,6 @@
 #include "raylib.h"
 #include <string>
 
-
 enum class ToolType {
     SELECT_MOVE = 0,
     ADD_BLOCK,
@@ -17,11 +16,14 @@ enum class EditField {
     NONE = 0,
     BODY_MASS,
     BODY_FRICTION,
+    BODY_RESTITUTION,
     BODY_WIDTH,
     BODY_HEIGHT,
+    BODY_RADIUS,
     SUPPORT_X,
     SUPPORT_Y,
     SUPPORT_WIDTH,
+    SUPPORT_ANGLE,
     ROPE_LENGTH,
     ROPE_STIFFNESS,
     WORLD_GRAVITY,
@@ -29,12 +31,12 @@ enum class EditField {
     NEW_ROPE_LENGTH
 };
 
-
 struct AppState {
     bool paused = true;
     int forceViewMode = 0; // 0: при наведении, 1: все, 2: скрыты
 
     ToolType activeTool = ToolType::SELECT_MOVE;
+    bool addMenuOpen = false; // Открыто ли всплывающее меню [+]
 
     int selectedBodyId = -1;
     int selectedRopeId = -1;
@@ -42,6 +44,7 @@ struct AppState {
     int hoveredBodyId = -1;
     int hoveredRopeId = -1;
     int hoveredDockBtn = -1;
+    int hoveredAddMenuBtn = -1;
 
     int draggedBodyId = -1;
     int draggedFreeRopeId = -1;
@@ -63,6 +66,9 @@ public:
 
     static Rectangle getDockRect(int screenH);
     static Rectangle getDockButtonRect(int index, int screenH);
+
+    static Rectangle getAddMenuRect(int screenH);
+    static Rectangle getAddMenuItemRect(int index, int screenH);
 
     static void update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm);
     static void commitEditField(PhysicsWorld& world, AppState& state);

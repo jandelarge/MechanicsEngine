@@ -15,6 +15,8 @@ struct ContactConstraint {
     float effMassN = 0.0f;
     float effMassT = 0.0f;
     float friction = 0.5f;
+    float restitution = 0.0f;
+    float restitutionVel = 0.0f;
     float jnAccum = 0.0f;
     float jtAccum = 0.0f;
 };

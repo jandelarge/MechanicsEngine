@@ -13,7 +13,8 @@ static bool CheckInputBoxClick(Vector2 m, float x, float y) {
 }
 
 Rectangle InputHandler::getDockRect(int screenH) {
-    return {20.0f, (float)screenH - 78.0f, 382.0f, 58.0f};
+    // 5 кнопок: Пуск, Сброс | Курсор [1], Добавить [2], Удалить [3]
+    return {20.0f, (float)screenH - 78.0f, 282.0f, 58.0f};
 }
 
 Rectangle InputHandler::getDockButtonRect(int index, int screenH) {
@@ -27,6 +28,21 @@ Rectangle InputHandler::getDockButtonRect(int index, int screenH) {
         if (i == 1) x += 12.0f; // Разделитель после кнопок Пуск и Сброс
     }
     return {x, y, btnSize, btnSize};
+}
+
+Rectangle InputHandler::getAddMenuRect(int screenH) {
+    Rectangle dock = getDockRect(screenH);
+    // Всплывающая панель ровно над доком
+    return {dock.x, dock.y - 70.0f, 386.0f, 62.0f};
+}
+
+Rectangle InputHandler::getAddMenuItemRect(int index, int screenH) {
+    Rectangle menu = getAddMenuRect(screenH);
+    float itemW = 88.0f;
+    float itemH = 48.0f;
+    float x = menu.x + 8.0f + index * (itemW + 6.0f);
+    float y = menu.y + (menu.height - itemH) * 0.5f;
+    return {x, y, itemW, itemH};
 }
 
 void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
@@ -45,6 +61,11 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
                     world.bodies[state.selectedBodyId].friction = std::clamp(val, 0.0f, 1.0f);
                 }
                 break;
+            case EditField::BODY_RESTITUTION:
+                if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
+                    world.bodies[state.selectedBodyId].restitution = std::clamp(val, 0.0f, 0.95f);
+                }
+                break;
             case EditField::BODY_WIDTH:
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
                     world.bodies[state.selectedBodyId].width = std::clamp(val, 0.4f, 6.0f);
@@ -55,6 +76,12 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
                     world.bodies[state.selectedBodyId].height = std::clamp(val, 0.4f, 6.0f);
                     world.bodies[state.selectedBodyId].updateMassData();
+                }
+                break;
+            case EditField::BODY_RADIUS:
+                if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
+                    world.bodies[state.selectedBodyId].setRadius(val);
+                    world.resolveEditorOverlap(state.selectedBodyId);
                 }
                 break;
             case EditField::SUPPORT_X:
@@ -70,6 +97,12 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
             case EditField::SUPPORT_WIDTH:
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
                     world.bodies[state.selectedBodyId].width = std::clamp(val, 0.5f, 8.0f);
+                }
+                break;
+            case EditField::SUPPORT_ANGLE:
+                if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
+                    float deg = std::clamp(val, -75.0f, 75.0f);
+                    world.bodies[state.selectedBodyId].angle = deg * 0.0174532925f;
                 }
                 break;
             case EditField::ROPE_LENGTH:
@@ -110,11 +143,39 @@ static void ActivateInputField(PhysicsWorld& world, AppState& state, EditField f
 bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH) {
     Vector2 m = GetMousePosition();
     state.hoveredDockBtn = -1;
+    state.hoveredAddMenuBtn = -1;
 
+    // 1. Проверяем клик и наведение по открытому меню [+]
+    if (state.addMenuOpen) {
+        Rectangle menuRect = getAddMenuRect(screenH);
+        if (PointInRect(m, menuRect)) {
+            for (int i = 0; i < 4; ++i) {
+                if (PointInRect(m, getAddMenuItemRect(i, screenH))) {
+                    state.hoveredAddMenuBtn = i;
+                    break;
+                }
+            }
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && state.hoveredAddMenuBtn != -1) {
+                commitEditField(world, state);
+                ToolType addTools[4] = {
+                    ToolType::ADD_BLOCK,
+                    ToolType::ADD_CIRCLE,
+                    ToolType::ADD_SUPPORT,
+                    ToolType::ADD_ROPE
+                };
+                state.activeTool = addTools[state.hoveredAddMenuBtn];
+                state.ropeStartBodyId = -1;
+                state.addMenuOpen = false;
+            }
+            return true;
+        }
+    }
+
+    // 2. Проверяем основной док (5 кнопок)
     Rectangle dock = getDockRect(screenH);
     if (!PointInRect(m, dock)) return false;
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 5; ++i) {
         if (PointInRect(m, getDockButtonRect(i, screenH))) {
             state.hoveredDockBtn = i;
             break;
@@ -132,16 +193,19 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
             state.draggedFreeRopeId = -1;
             state.paused = true;
             world.restoreSnapshot();
-        } else {
-            ToolType types[5] = {
-                ToolType::SELECT_MOVE,
-                ToolType::ADD_BLOCK,
-                ToolType::ADD_SUPPORT,
-                ToolType::ADD_ROPE,
-                ToolType::DELETE_OBJ
-            };
-            state.activeTool = types[state.hoveredDockBtn - 2];
+        } else if (state.hoveredDockBtn == 2) {
+            // Кнопка [1]: Курсор
+            state.activeTool = ToolType::SELECT_MOVE;
             state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
+        } else if (state.hoveredDockBtn == 3) {
+            // Кнопка [2]: Меню [+]
+            state.addMenuOpen = !state.addMenuOpen;
+        } else if (state.hoveredDockBtn == 4) {
+            // Кнопка [3]: Удалить
+            state.activeTool = ToolType::DELETE_OBJ;
+            state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
         }
     }
     return true;
@@ -169,6 +233,43 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
             if (CheckInputBoxClick(m, x, topY + 84))  { ActivateInputField(world, state, EditField::SUPPORT_X); return; }
             if (CheckInputBoxClick(m, x, topY + 138)) { ActivateInputField(world, state, EditField::SUPPORT_Y); return; }
             if (CheckInputBoxClick(m, x, topY + 192)) { ActivateInputField(world, state, EditField::SUPPORT_WIDTH); return; }
+            if (CheckInputBoxClick(m, x, topY + 246)) { ActivateInputField(world, state, EditField::SUPPORT_ANGLE); return; }
+
+            if (PointInRect(m, {x, topY + 302, w, 26})) {
+                commitEditField(world, state);
+                b.angle = 0.0f;
+                return;
+            }
+
+            if (PointInRect(m, {x, (float)screenH - 48.0f, w, 32})) {
+                commitEditField(world, state);
+                int delId = state.selectedBodyId;
+                state.selectedBodyId = -1;
+                world.removeBody(delId);
+                return;
+            }
+            commitEditField(world, state);
+            return;
+        } else if (b.shape == ShapeType::CIRCLE) {
+            if (CheckInputBoxClick(m, x, topY + 44))  { ActivateInputField(world, state, EditField::BODY_MASS); return; }
+            if (CheckInputBoxClick(m, x, topY + 98))  { ActivateInputField(world, state, EditField::BODY_FRICTION); return; }
+            if (CheckInputBoxClick(m, x, topY + 152)) { ActivateInputField(world, state, EditField::BODY_RADIUS); return; }
+            if (CheckInputBoxClick(m, x, topY + 206)) { ActivateInputField(world, state, EditField::BODY_RESTITUTION); return; }
+
+            if (PointInRect(m, {x, topY + 262, w, 28})) {
+                commitEditField(world, state);
+                b.canRotate = !b.canRotate;
+                if (!b.canRotate) { b.angle = 0.0f; b.angVel = 0.0f; }
+                b.updateMassData();
+                return;
+            }
+
+            if (PointInRect(m, {x, topY + 296, w, 26})) {
+                commitEditField(world, state);
+                b.angle = 0.0f;
+                b.angVel = 0.0f;
+                return;
+            }
 
             if (PointInRect(m, {x, (float)screenH - 48.0f, w, 32})) {
                 commitEditField(world, state);
@@ -328,12 +429,42 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
         }
     }
 
-    if (IsKeyPressed(KEY_ONE))   { state.activeTool = ToolType::SELECT_MOVE; state.ropeStartBodyId = -1; }
-    if (IsKeyPressed(KEY_TWO))   { state.activeTool = ToolType::ADD_BLOCK;   state.ropeStartBodyId = -1; }
-    if (IsKeyPressed(KEY_THREE)) { state.activeTool = ToolType::ADD_SUPPORT; state.ropeStartBodyId = -1; }
-    if (IsKeyPressed(KEY_FOUR))  { state.activeTool = ToolType::ADD_ROPE;    state.ropeStartBodyId = -1; }
-    if (IsKeyPressed(KEY_FIVE))  { state.activeTool = ToolType::DELETE_OBJ;  state.ropeStartBodyId = -1; }
-    if (IsKeyPressed(KEY_SIX))  { state.activeTool = ToolType::ADD_CIRCLE;  state.ropeStartBodyId = -1; }
+    // Шорткаты: [1] Курсор, [2] -> [1..4] Добавить, [3] Удалить
+    if (state.addMenuOpen) {
+        if (IsKeyPressed(KEY_ONE)) {
+            state.activeTool = ToolType::ADD_BLOCK;
+            state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
+        } else if (IsKeyPressed(KEY_TWO)) {
+            state.activeTool = ToolType::ADD_CIRCLE;
+            state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
+        } else if (IsKeyPressed(KEY_THREE)) {
+            state.activeTool = ToolType::ADD_SUPPORT;
+            state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
+        } else if (IsKeyPressed(KEY_FOUR)) {
+            state.activeTool = ToolType::ADD_ROPE;
+            state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
+        } else if (IsKeyPressed(KEY_ESCAPE)) {
+            state.addMenuOpen = false; // Закрываем меню выбора на Escape
+        }
+    } else {
+        if (IsKeyPressed(KEY_ONE)) {
+            state.activeTool = ToolType::SELECT_MOVE;
+            state.ropeStartBodyId = -1;
+        } else if (IsKeyPressed(KEY_TWO)) {
+            state.addMenuOpen = true;
+        } else if (IsKeyPressed(KEY_THREE)) {
+            state.activeTool = ToolType::DELETE_OBJ;
+            state.ropeStartBodyId = -1;
+        } else if (IsKeyPressed(KEY_ESCAPE)) {
+            // Если меню закрыто, Escape отменяет протяжку нити и возвращает курсор
+            state.ropeStartBodyId = -1;
+            state.activeTool = ToolType::SELECT_MOVE;
+        }
+    }
 }
 
 void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm) {
@@ -382,6 +513,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             commitEditField(world, state);
+            state.addMenuOpen = false;
 
             switch (state.activeTool) {
                 case ToolType::SELECT_MOVE: {
@@ -421,21 +553,22 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                     world.saveSnapshot();
                     break;
                 }
-                case ToolType::ADD_SUPPORT: {
-                    int id = world.createBody(state.mouseWorldPos, 3.0f, 0.2f, 1.0f, true);
+                case ToolType::ADD_CIRCLE: {
+                    Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
+                    int id = world.createCircle(safePos, 0.5f, 1.5f, false);
+                    world.tryAttachBodyToFreeRopes(id);
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
                     world.updateStaticTelemetry();
                     world.saveSnapshot();
                     break;
                 }
-                case ToolType::ADD_CIRCLE: {
-                    Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
-                    int id = world.createCircle(safePos, 0.5f, 1.0f, false);
-                    world.tryAttachBodyToFreeRopes(id);
+                case ToolType::ADD_SUPPORT: {
+                    int id = world.createBody(state.mouseWorldPos, 3.0f, 0.2f, 1.0f, true);
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
                     world.updateStaticTelemetry();
+                    world.saveSnapshot();
                     break;
                 }
                 case ToolType::ADD_ROPE: {
@@ -477,7 +610,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                     }
                     break;
                 }
-
                 case ToolType::DELETE_OBJ: {
                     if (state.hoveredBodyId != -1) {
                         if (state.selectedBodyId == state.hoveredBodyId) state.selectedBodyId = -1;

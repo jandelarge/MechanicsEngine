@@ -3,7 +3,6 @@
 #include <cmath>
 #include <cstdio>
 
-// Палитра проекта: Темно-серый (#191716), Винный (#773344), Состаренное золото (#C2A878)
 static const Color COL_BG_DARK     = {25, 23, 22, 255};    // #191716
 static const Color COL_PANEL_BG    = {32, 29, 28, 255};
 static const Color COL_WINE        = {119, 51, 68, 255};   // #773344
@@ -96,12 +95,52 @@ void Renderer::drawValueInputRow(float x, float y, const char* label, const char
                15, 1.0f, txtCol);
 }
 
+void Renderer::drawCreationIcon(int itemIndex, Vector2 center, Color col, bool active) const {
+    float cx = center.x;
+    float cy = center.y;
+
+    switch (itemIndex) {
+        case 0: { // Брусок
+            Rectangle box = {cx - 7.5f, cy - 7.5f, 15.0f, 15.0f};
+            DrawRectangleRounded(box, 0.2f, 4, Fade(col, active ? 0.35f : 0.15f));
+            DrawRectangleRoundedLinesEx(box, 0.2f, 4, 1.8f, col);
+            DrawCircleV({cx, cy}, 1.8f, col);
+            break;
+        }
+        case 1: { // Шар
+            DrawCircleV({cx, cy}, 8.0f, Fade(col, active ? 0.35f : 0.15f));
+            DrawCircleLines((int)cx, (int)cy, 8.0f, col);
+            DrawLineEx({cx, cy}, {cx + 5.8f, cy - 5.2f}, 1.8f, col);
+            DrawCircleV({cx, cy}, 1.8f, col);
+            break;
+        }
+        case 2: { // Опора
+            DrawLineEx({cx - 9.5f, cy + 3.0f}, {cx + 9.5f, cy + 3.0f}, 2.2f, col);
+            for (int i = -2; i <= 2; ++i) {
+                float sx = cx + i * 4.2f + 1.5f;
+                DrawLineEx({sx, cy + 3.0f}, {sx - 3.8f, cy - 3.8f}, 1.5f, col);
+            }
+            break;
+        }
+        case 3: { // Нить
+            Vector2 a = {cx - 6.0f, cy - 6.0f};
+            Vector2 b = {cx + 6.0f, cy + 6.0f};
+            DrawLineEx(a, b, 2.0f, col);
+            DrawCircleV(a, 3.0f, COL_BG_DARK);
+            DrawCircleLines((int)a.x, (int)a.y, 3.0f, col);
+            DrawCircleV(b, 3.0f, COL_BG_DARK);
+            DrawCircleLines((int)b.x, (int)b.y, 3.0f, col);
+            break;
+        }
+    }
+}
+
 void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Color col) const {
     float cx = r.x + r.width * 0.5f;
     float cy = r.y + r.height * 0.5f;
 
     switch (index) {
-        case 0: { // Пуск (треугольник) / Пауза (две полоски)
+        case 0: { // Пуск / Пауза
             if (paused) {
                 DrawTriangle({cx - 5.0f, cy - 8.0f}, {cx - 5.0f, cy + 8.0f}, {cx + 8.0f, cy}, col);
             } else {
@@ -110,12 +149,15 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             }
             break;
         }
-        case 1: { // Сброс (круговая стрелка)
-            DrawRing({cx, cy}, 6.5f, 8.8f, 35.0f, 315.0f, 24, col);
-            DrawTriangle({cx + 4.5f, cy - 9.5f}, {cx + 10.5f, cy - 3.5f}, {cx + 2.5f, cy - 3.5f}, col);
+        case 1: { // Сброс (круговая стрелка с правильным порядком вершин CCW)
+            DrawRing({cx, cy}, 6.4f, 8.8f, 42.0f, 312.0f, 28, col);
+            Vector2 tip       = {cx + 8.6f, cy - 2.4f};
+            Vector2 outerBase = {cx + 7.2f, cy - 9.4f};
+            Vector2 innerBase = {cx + 1.8f, cy - 3.2f};
+            DrawTriangle(tip, outerBase, innerBase, col);
             break;
         }
-        case 2: { // Курсор (классическая стрелка указателя)
+        case 2: { // [1] Курсор
             Vector2 p1 = {cx - 6.0f, cy - 10.0f};
             Vector2 p2 = {cx - 6.0f, cy + 7.0f};
             Vector2 p3 = {cx + 6.0f, cy + 1.0f};
@@ -123,32 +165,12 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             DrawLineEx({cx - 2.0f, cy + 2.0f}, {cx + 3.0f, cy + 9.0f}, 2.5f, col);
             break;
         }
-        case 3: { // Брусок (кубик)
-            Rectangle box = {cx - 9.0f, cy - 9.0f, 18.0f, 18.0f};
-            DrawRectangleRounded(box, 0.2f, 4, Fade(col, active ? 0.35f : 0.15f));
-            DrawRectangleRoundedLinesEx(box, 0.2f, 4, 2.0f, col);
-            DrawCircleV({cx, cy}, 2.0f, col);
+        case 3: { // [2] Плюс [+] (Меню добавления объектов)
+            DrawLineEx({cx - 8.5f, cy}, {cx + 8.5f, cy}, 2.6f, col);
+            DrawLineEx({cx, cy - 8.5f}, {cx, cy + 8.5f}, 2.6f, col);
             break;
         }
-        case 4: { // Опора (прямая со штриховкой)
-            DrawLineEx({cx - 11.0f, cy + 3.0f}, {cx + 11.0f, cy + 3.0f}, 2.5f, col);
-            for (int i = -2; i <= 2; ++i) {
-                float sx = cx + i * 5.0f + 2.0f;
-                DrawLineEx({sx, cy + 3.0f}, {sx - 4.5f, cy - 4.5f}, 1.6f, col);
-            }
-            break;
-        }
-        case 5: { // Нить (трос с двумя кольцами крепления)
-            Vector2 a = {cx - 7.0f, cy - 7.0f};
-            Vector2 b = {cx + 7.0f, cy + 7.0f};
-            DrawLineEx(a, b, 2.2f, col);
-            DrawCircleV(a, 3.5f, COL_BG_DARK);
-            DrawCircleLines((int)a.x, (int)a.y, 3.5f, col);
-            DrawCircleV(b, 3.5f, COL_BG_DARK);
-            DrawCircleLines((int)b.x, (int)b.y, 3.5f, col);
-            break;
-        }
-        case 6: { // Удалить (корзина)
+        case 4: { // [3] Удалить (корзина)
             DrawLineEx({cx - 8.0f, cy - 6.0f}, {cx + 8.0f, cy - 6.0f}, 2.0f, col);
             DrawLineEx({cx - 3.0f, cy - 8.5f}, {cx + 3.0f, cy - 8.5f}, 2.0f, col);
             DrawRectangleLinesEx({cx - 6.5f, cy - 5.0f, 13.0f, 14.0f}, 1.8f, col);
@@ -162,49 +184,48 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
 void Renderer::drawLiquidDock(int sh, const AppState& state) const {
     Rectangle dock = InputHandler::getDockRect(sh);
 
-    // 1. Мягкая глубокая тень под стеклянной капсулой
-    DrawRectangleRounded({dock.x + 2.0f, dock.y + 5.0f, dock.width, dock.height}, 0.48f, 16, {10, 8, 8, 150});
+    // 1. Глубокая тень под доком
+    DrawRectangleRounded({dock.x + 2.0f, dock.y + 5.0f, dock.width, dock.height}, 0.48f, 16, {10, 8, 8, 160});
 
-    // 2. Полупрозрачная основа Liquid Glass (матовое темное стекло с винным подтоном)
-    DrawRectangleRounded(dock, 0.48f, 16, {38, 32, 31, 215});
+    // 2. Чистая матовая основа дока (без баганого верхнего блика)
+    DrawRectangleRounded(dock, 0.48f, 16, {34, 29, 28, 238});
 
-    // 3. Верхний внутренний блик преломления стекла (Specular sheen)
-    DrawRectangleRounded({dock.x + 6.0f, dock.y + 2.0f, dock.width - 12.0f, dock.height * 0.42f},
-                         0.48f, 12, Fade(COL_GOLD, 0.07f));
+    // 3. Тонкая золотая кромка
+    DrawRectangleRoundedLinesEx(dock, 0.48f, 16, 1.5f, Fade(COL_GOLD, 0.45f));
 
-    // 4. Тонкая золотая стеклянная кромка
-    DrawRectangleRoundedLinesEx(dock, 0.48f, 16, 1.5f, Fade(COL_GOLD, 0.42f));
-
-    // Разделительная линия между управлением временем и инструментами
+    // Разделитель между временем и инструментами
     Rectangle b1 = InputHandler::getDockButtonRect(1, sh);
     float divX = b1.x + b1.width + 9.0f;
     DrawLineEx({divX, dock.y + 12.0f}, {divX, dock.y + dock.height - 12.0f}, 1.5f, Fade(COL_GOLD, 0.25f));
 
-    const char* tooltips[7] = {
+    bool isCreationTool = (state.activeTool == ToolType::ADD_BLOCK ||
+                           state.activeTool == ToolType::ADD_CIRCLE ||
+                           state.activeTool == ToolType::ADD_SUPPORT ||
+                           state.activeTool == ToolType::ADD_ROPE);
+
+    const char* activeCreateName = "Создать объект [2]";
+    if (state.activeTool == ToolType::ADD_BLOCK)   activeCreateName = "Создать: Брусок [2]";
+    if (state.activeTool == ToolType::ADD_CIRCLE)  activeCreateName = "Создать: Шар [2]";
+    if (state.activeTool == ToolType::ADD_SUPPORT) activeCreateName = "Создать: Опора [2]";
+    if (state.activeTool == ToolType::ADD_ROPE)    activeCreateName = "Создать: Нить [2]";
+
+    const char* tooltips[5] = {
         state.paused ? "Запуск [Пробел]" : "Пауза [Пробел]",
         "Сброс [R]",
         "Курсор [1]",
-        "Брусок [2]",
-        "Опора [3]",
-        "Нить [4]",
-        "Удалить [5]"
+        activeCreateName,
+        "Удалить [3]"
     };
 
-    ToolType toolTypes[5] = {
-        ToolType::SELECT_MOVE,
-        ToolType::ADD_BLOCK,
-        ToolType::ADD_SUPPORT,
-        ToolType::ADD_ROPE,
-        ToolType::DELETE_OBJ
-    };
-
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 5; ++i) {
         Rectangle btn = InputHandler::getDockButtonRect(i, sh);
         bool hovered = (state.hoveredDockBtn == i);
         bool active = false;
 
         if (i == 0) active = !state.paused;
-        else if (i >= 2) active = (state.activeTool == toolTypes[i - 2]);
+        else if (i == 2) active = (state.activeTool == ToolType::SELECT_MOVE && !state.addMenuOpen);
+        else if (i == 3) active = state.addMenuOpen || isCreationTool;
+        else if (i == 4) active = (state.activeTool == ToolType::DELETE_OBJ && !state.addMenuOpen);
 
         if (active) {
             DrawRectangleRounded(btn, 0.36f, 10, COL_WINE);
@@ -217,8 +238,14 @@ void Renderer::drawLiquidDock(int sh, const AppState& state) const {
         Color iconCol = active ? COL_GOLD : (hovered ? COL_TEXT_CREAM : COL_TEXT_MUTED);
         drawDockIcon(i, btn, active, state.paused, iconCol);
 
-        // Всплывающая стеклянная подсказка над иконкой при наведении
-        if (hovered) {
+        // Цифра шортката [1..3] в правом нижнем углу кнопок инструментов
+        if (i >= 2) {
+            const char* keyTxt = TextFormat("%d", i - 1);
+            DrawTextEx(fontSmall, keyTxt, {btn.x + btn.width - 11.0f, btn.y + btn.height - 14.0f},
+                       14, 1.0f, active ? COL_TEXT_CREAM : COL_GOLD_DIM);
+        }
+
+        if (hovered && !state.addMenuOpen) {
             Vector2 ts = MeasureTextEx(fontMain, tooltips[i], 14, 1.0f);
             float pillW = ts.x + 20.0f;
             float pillH = 26.0f;
@@ -226,9 +253,47 @@ void Renderer::drawLiquidDock(int sh, const AppState& state) const {
             if (pillX < 12.0f) pillX = 12.0f;
             float pillY = dock.y - 34.0f;
 
-            DrawRectangleRounded({pillX, pillY, pillW, pillH}, 0.5f, 8, {34, 28, 27, 235});
+            DrawRectangleRounded({pillX, pillY, pillW, pillH}, 0.5f, 8, {34, 28, 27, 240});
             DrawRectangleRoundedLinesEx({pillX, pillY, pillW, pillH}, 0.5f, 8, 1.2f, COL_GOLD);
             DrawTextEx(fontMain, tooltips[i], {pillX + 10.0f, pillY + (pillH - ts.y) * 0.5f}, 14, 1.0f, COL_TEXT_CREAM);
+        }
+    }
+
+    // Всплывающее меню [+] с объектами и шорткатами [1..4]
+    if (state.addMenuOpen) {
+        Rectangle menu = InputHandler::getAddMenuRect(sh);
+
+        DrawRectangleRounded({menu.x + 2.0f, menu.y + 4.0f, menu.width, menu.height}, 0.35f, 12, {10, 8, 8, 170});
+        DrawRectangleRounded(menu, 0.35f, 12, {36, 30, 29, 242});
+        DrawRectangleRoundedLinesEx(menu, 0.35f, 12, 1.6f, COL_GOLD);
+
+        const char* names[4] = {"Брусок", "Шар", "Опора", "Нить"};
+        ToolType types[4] = {
+            ToolType::ADD_BLOCK,
+            ToolType::ADD_CIRCLE,
+            ToolType::ADD_SUPPORT,
+            ToolType::ADD_ROPE
+        };
+
+        for (int i = 0; i < 4; ++i) {
+            Rectangle item = InputHandler::getAddMenuItemRect(i, sh);
+            bool hovered = (state.hoveredAddMenuBtn == i);
+            bool active = (state.activeTool == types[i]);
+
+            Color bg = active ? COL_WINE : (hovered ? Fade(COL_WINE, 0.55f) : Color{29, 25, 24, 230});
+            Color border = active ? COL_GOLD : (hovered ? COL_GOLD : Color{68, 58, 54, 255});
+
+            DrawRectangleRounded(item, 0.28f, 8, bg);
+            DrawRectangleRoundedLinesEx(item, 0.28f, 8, active ? 1.8f : 1.0f, border);
+
+            Color col = active ? COL_GOLD : (hovered ? COL_TEXT_CREAM : COL_TEXT_MUTED);
+            drawCreationIcon(i, {item.x + 20.0f, item.y + item.height * 0.5f}, col, active);
+
+            DrawTextEx(fontMain, names[i], {item.x + 35.0f, item.y + 16.0f}, 14, 1.0f,
+                       active ? COL_TEXT_CREAM : (hovered ? COL_TEXT_CREAM : COL_TEXT_MUTED));
+
+            const char* keyStr = TextFormat("[%d]", i + 1);
+            DrawTextEx(fontSmall, keyStr, {item.x + item.width - 22.0f, item.y + 3.0f}, 14, 1.0f, COL_GOLD);
         }
     }
 }
@@ -258,8 +323,42 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
                               state.editingField == EditField::SUPPORT_Y, state.inputBuffer);
             drawValueInputRow(x, topY + 192, "Ширина опоры W", TextFormat("%.2f м", b.width),
                               state.editingField == EditField::SUPPORT_WIDTH, state.inputBuffer);
+            drawValueInputRow(x, topY + 246, "Угол наклона (горка)", TextFormat("%.1f\xC2\xB0", b.angle * 57.2958f),
+                              state.editingField == EditField::SUPPORT_ANGLE, state.inputBuffer);
+
+            drawButton({x, topY + 302, w, 26}, "Выровнять горизонтально (0\xC2\xB0)", false, COL_GOLD);
 
             drawButton({x, (float)sh - 48.0f, w, 32}, "Удалить опору", false, COL_WINE_BRIGHT);
+            return;
+        } else if (b.shape == ShapeType::CIRCLE) {
+            DrawTextEx(fontBold, TextFormat("Свойства шара #%d", b.id + 1), {x, topY + 12}, 18, 1.0f, COL_GOLD);
+
+            drawValueInputRow(x, topY + 44,  "Масса m", TextFormat("%.1f кг", b.mass),
+                              state.editingField == EditField::BODY_MASS, state.inputBuffer);
+            drawValueInputRow(x, topY + 98,  "Коэффициент трения \xCE\xBC", TextFormat("%.2f", b.friction),
+                              state.editingField == EditField::BODY_FRICTION, state.inputBuffer);
+            drawValueInputRow(x, topY + 152, "Радиус шара R", TextFormat("%.2f м", b.radius),
+                              state.editingField == EditField::BODY_RADIUS, state.inputBuffer);
+            drawValueInputRow(x, topY + 206, "Упругость отскока e", TextFormat("%.2f", b.restitution),
+                              state.editingField == EditField::BODY_RESTITUTION, state.inputBuffer);
+
+            drawButton({x, topY + 262, w, 28},
+                       b.canRotate ? "Вращение шара: Вкл" : "Вращение шара: Выкл",
+                       b.canRotate, COL_GOLD);
+            drawButton({x, topY + 296, w, 26}, "Сбросить угол (0\xC2\xB0)", false, COL_GOLD);
+
+            float ty = topY + 332;
+            DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
+            DrawTextEx(fontBold, "Телеметрия", {x, ty + 8}, 17, 1.0f, COL_GOLD);
+            DrawTextEx(fontMain, TextFormat("Момент инерции I: %.2f кг*м\xC2\xB2", b.inertia), {x, ty + 32}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Угол / \xCF\x89: %.1f\xC2\xB0 (%.2f рад/с)", b.angle * 57.2958f, b.angVel), {x, ty + 52}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Скорость |v|: %.2f м/с", b.vel.length()), {x, ty + 72}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Сила тяжести mg: %.1f Н", b.mass * world.G), {x, ty + 92}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Реакция опоры N: %.1f Н", b.normalForce), {x, ty + 112}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Давление сверху P: %.1f Н", b.topLoadForce), {x, ty + 132}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Сила трения Fтр: %.1f Н", b.frictionForce), {x, ty + 152}, 15, 1.0f, COL_TEXT_MUTED);
+
+            drawButton({x, (float)sh - 48.0f, w, 32}, "Удалить шар", false, COL_WINE_BRIGHT);
             return;
         } else {
             DrawTextEx(fontBold, TextFormat("Свойства бруска #%d", b.id + 1), {x, topY + 12}, 18, 1.0f, COL_GOLD);
@@ -345,15 +444,22 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
     drawButton({x, topY + 288, w, 30}, "Очистить всю сцену", false, COL_GOLD);
 }
 
-void Renderer::drawHatchedSupport(Vector2 pos, float width, float height, bool highlighted, bool unlocked) const {
-    float x1 = pos.x - width * 0.5f;
-    float x2 = pos.x + width * 0.5f;
-    float y = pos.y - height * 0.5f;
+void Renderer::drawHatchedSupport(const Body& b, int sw, int sh, bool highlighted, bool unlocked) const {
+    Vec2 leftW = b.localToWorld({-b.width * 0.5f, 0.0f});
+    Vec2 rightW = b.localToWorld({b.width * 0.5f, 0.0f});
+    Vector2 p1 = worldToScreen(leftW, sw, sh);
+    Vector2 p2 = worldToScreen(rightW, sw, sh);
 
     Color lineCol = highlighted ? COL_GOLD : (unlocked ? COL_WINE_BRIGHT : COL_TEXT_CREAM);
-    DrawLineEx({x1, y}, {x2, y}, highlighted ? 3.5f : 3.0f, lineCol);
-    for (float curX = x1 + 4.0f; curX <= x2; curX += 14.0f) {
-        DrawLineEx({curX, y}, {curX - 10.0f, y - 10.0f}, 1.5f, highlighted ? COL_GOLD : COL_GOLD_DIM);
+    DrawLineEx(p1, p2, highlighted ? 3.5f : 3.0f, lineCol);
+
+    int steps = std::max(4, (int)(b.width * 5.0f));
+    for (int i = 0; i <= steps; ++i) {
+        float t = (float)i / (float)steps;
+        Vec2 baseW = b.localToWorld({-b.width * 0.5f + t * b.width, 0.0f});
+        Vec2 tipW  = b.localToWorld({-b.width * 0.5f + t * b.width - 0.14f, 0.14f});
+        DrawLineEx(worldToScreen(baseW, sw, sh), worldToScreen(tipW, sw, sh),
+                   1.5f, highlighted ? COL_GOLD : COL_GOLD_DIM);
     }
 }
 
@@ -455,7 +561,91 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
     }
 
     // 2. Отрисовка тел
+    for (const auto& b : world.bodies) {
+        Vector2 scr = worldToScreen(b.pos, sw, sh);
+        float bw = b.width * ppm;
+        float bh = b.height * ppm;
+        bool isSelected = (b.id == state.hoveredBodyId) || (b.id == state.draggedBodyId) || (b.id == state.selectedBodyId);
 
+        if (b.isStatic && b.shape == ShapeType::BOX) {
+            drawHatchedSupport(b, sw, sh, isSelected, !b.supportLocked);
+        } else if (b.shape == ShapeType::CIRCLE) {
+            Color bodyCol = (b.id == state.selectedBodyId) ? COL_WINE_BRIGHT : (isSelected ? Color{134, 58, 77, 255} : COL_WINE);
+            Color outlineCol = isSelected ? COL_GOLD : COL_TEXT_CREAM;
+
+            float rScreen = b.radius * ppm;
+            DrawCircleV(scr, rScreen, bodyCol);
+
+            Vec2 dir1 = {std::cos(b.angle), std::sin(b.angle)};
+            Vec2 dir2 = {-dir1.y, dir1.x};
+            DrawLineEx(worldToScreen(b.pos - dir1 * b.radius, sw, sh),
+                       worldToScreen(b.pos + dir1 * b.radius, sw, sh), 1.5f, Fade(COL_GOLD, 0.35f));
+            DrawLineEx(worldToScreen(b.pos - dir2 * b.radius, sw, sh),
+                       worldToScreen(b.pos + dir2 * b.radius, sw, sh), 1.5f, Fade(COL_GOLD, 0.35f));
+
+            Vector2 edgeScr = worldToScreen(b.pos + dir1 * b.radius, sw, sh);
+            DrawLineEx(scr, edgeScr, 2.4f, outlineCol);
+            DrawCircleV(edgeScr, 3.5f, COL_GOLD);
+
+            DrawRing(scr, rScreen - (isSelected ? 2.5f : 1.6f), rScreen, 0.0f, 360.0f, 48, outlineCol);
+
+            const char* massTxt = TextFormat("%.1f кг", b.mass);
+            Vector2 txtSize = MeasureTextEx(fontBold, massTxt, 18, 1.0f);
+            DrawRectangleRounded({scr.x - txtSize.x * 0.5f - 4.0f, scr.y - txtSize.y * 0.5f - 1.0f, txtSize.x + 8.0f, txtSize.y + 2.0f},
+                                 0.4f, 4, Fade(COL_BG_DARK, 0.65f));
+            DrawTextEx(fontBold, massTxt, {scr.x - txtSize.x * 0.5f, scr.y - txtSize.y * 0.5f}, 18, 1.0f, COL_TEXT_CREAM);
+        } else {
+            drawRotatedBlock(b, scr, bw, bh, isSelected, b.id == state.selectedBodyId);
+        }
+
+        if (state.activeTool == ToolType::ADD_ROPE && b.id == state.hoveredBodyId) {
+            Vec2 snap = world.getSnapOffset(b.id, state.mouseWorldPos);
+            Vector2 snapScr = worldToScreen(b.localToWorld(snap), sw, sh);
+            DrawCircleV(snapScr, 5.5f, COL_GOLD);
+        }
+    }
+
+    // 2.5. Фантом-превью и компактный индикатор прямо рядом с курсором при спавне
+    Vector2 m = GetMousePosition();
+    Rectangle dockRect = InputHandler::getDockRect(sh);
+    Rectangle menuRect = InputHandler::getAddMenuRect(sh);
+    bool overUI = (m.x >= canvasW) ||
+                  (m.x >= dockRect.x && m.x <= dockRect.x + dockRect.width && m.y >= dockRect.y && m.y <= dockRect.y + dockRect.height) ||
+                  (state.addMenuOpen && m.x >= menuRect.x && m.x <= menuRect.x + menuRect.width && m.y >= menuRect.y && m.y <= menuRect.y + menuRect.height);
+
+    bool isCreationTool = (state.activeTool == ToolType::ADD_BLOCK ||
+                           state.activeTool == ToolType::ADD_CIRCLE ||
+                           state.activeTool == ToolType::ADD_SUPPORT ||
+                           state.activeTool == ToolType::ADD_ROPE);
+
+    if (!overUI && isCreationTool) {
+        if (state.activeTool == ToolType::ADD_BLOCK) {
+            float s = 1.0f * ppm;
+            Rectangle r = {m.x - s * 0.5f, m.y - s * 0.5f, s, s};
+            DrawRectangleRec(r, Fade(COL_WINE, 0.28f));
+            DrawRectangleLinesEx(r, 1.5f, Fade(COL_GOLD, 0.7f));
+        } else if (state.activeTool == ToolType::ADD_CIRCLE) {
+            float rad = 0.5f * ppm;
+            DrawCircleV(m, rad, Fade(COL_WINE, 0.28f));
+            DrawRing(m, rad - 1.5f, rad, 0.0f, 360.0f, 36, Fade(COL_GOLD, 0.7f));
+        } else if (state.activeTool == ToolType::ADD_SUPPORT) {
+            float w = 3.0f * ppm;
+            DrawLineEx({m.x - w * 0.5f, m.y}, {m.x + w * 0.5f, m.y}, 2.5f, Fade(COL_GOLD, 0.75f));
+        }
+
+        int iconIdx = 0;
+        const char* label = "+ Брусок";
+        if (state.activeTool == ToolType::ADD_CIRCLE)  { iconIdx = 1; label = "+ Шар"; }
+        if (state.activeTool == ToolType::ADD_SUPPORT) { iconIdx = 2; label = "+ Опора"; }
+        if (state.activeTool == ToolType::ADD_ROPE)    { iconIdx = 3; label = "+ Нить"; }
+
+        Vector2 ts = MeasureTextEx(fontSmall, label, 14, 1.0f);
+        Rectangle tag = {m.x + 14.0f, m.y + 14.0f, ts.x + 34.0f, 24.0f};
+        DrawRectangleRounded(tag, 0.5f, 6, {28, 24, 23, 225});
+        DrawRectangleRoundedLinesEx(tag, 0.5f, 6, 1.0f, Fade(COL_GOLD, 0.75f));
+        drawCreationIcon(iconIdx, {tag.x + 14.0f, tag.y + 12.0f}, COL_GOLD, true);
+        DrawTextEx(fontSmall, label, {tag.x + 26.0f, tag.y + (tag.height - ts.y) * 0.5f}, 14, 1.0f, COL_TEXT_CREAM);
+    }
 
     // 3. Векторы сил
     const float FORCE_SCALE = 0.9f;
@@ -466,7 +656,7 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
             if (state.forceViewMode == 0 && !isHighlighted) continue;
 
             Vector2 scr = worldToScreen(b.pos, sw, sh);
-            float bh = b.height * ppm;
+            float bh = (b.shape == ShapeType::CIRCLE ? (b.radius * 2.0f) : b.height) * ppm;
 
             float fg = b.mass * world.G;
             drawVectorArrow(scr, {scr.x, scr.y + fg * FORCE_SCALE}, {214, 92, 92, 255},
@@ -511,7 +701,7 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
         }
     }
 
-    // 5. Левый верхний блок подсказок
+    // 5. Левый верхний блок подсказок (только глобальные клавиши: Пробел, V, R)
     float hudY = 18.0f;
     const char* forceModeStr = (state.forceViewMode == 0) ? "[V] - силы (при наведении)"
                              : (state.forceViewMode == 1) ? "[V] - силы (все)"
@@ -519,10 +709,9 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
 
     DrawTextEx(fontMain, state.paused ? "[Пробел] - пауза" : "[Пробел] - симуляция", {20, hudY}, 15, 1.0f, COL_TEXT_MUTED);
     DrawTextEx(fontMain, forceModeStr, {20, hudY + 22}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, "[ЛКМ] - перемещать груз", {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, "[R] - сброс", {20, hudY + 66}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, "[R] - сброс сцены", {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
 
-    // 6. Нижний левый Liquid Glass Dock и правый инспектор
+    // 6. Нижний док и правый инспектор
     drawLiquidDock(sh, state);
     drawInspector(world, state, sw, sh);
 

@@ -21,3 +21,7 @@ target_link_libraries(MechanicsEngine PRIVATE raylib)
 if (MSVC)
     target_compile_options(MechanicsEngine PRIVATE /W0)
 endif()
+
+if (MINGW)
+    target_link_options(MechanicsEngine PRIVATE -static -static-libgcc -static-libstdc++ -mwindows)
+endif()

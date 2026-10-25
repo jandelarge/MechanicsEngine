@@ -5,8 +5,7 @@
 #include <cmath>
 #include <array>
 
-enum class ShapeType { BOX = 0, CIRCLE};
-
+enum class ShapeType { BOX = 0, CIRCLE };
 
 struct Body {
     int id = 0;
@@ -29,10 +28,10 @@ struct Body {
     float invInertia = 1.0f;
 
     float friction = 0.6f;
+    float restitution = 0.1f; // Коэффициент упругости (отскока)
     bool isStatic = false;
     bool supportLocked = true;
     bool canRotate = true;
-
 
     int supportedBy = -1;
     float normalForce = 0.0f;
@@ -43,28 +42,44 @@ struct Body {
     Body(int id, Vec2 pos, float w, float h, float m, bool isStatic = false)
         : id(id), pos(pos), width(w), height(h), mass(m), isStatic(isStatic)
     {
+        restitution = 0.08f;
         updateMassData();
     }
 
     void updateMassData() {
         if (isStatic) {
+            invMass = 0.0f;
             inertia = 0.0f;
+            invInertia = 0.0f;
             return;
         }
+
+        invMass = (mass > 0.0f) ? (1.0f / mass) : 0.0f;
+
         if (!canRotate) {
             inertia = 0.0f;
+            invInertia = 0.0f;
             return;
         }
 
         if (shape == ShapeType::CIRCLE) {
-            inertia =  0.5f * mass * (radius * radius);
+            inertia = 0.5f * mass * (radius * radius);
         } else {
-        inertia = (1.0f / 12.0f)*mass*(width*width + height * height);
+            inertia = (1.0f / 12.0f) * mass * (width * width + height * height);
         }
+
+        invInertia = (inertia > 0.0f) ? (1.0f / inertia) : 0.0f;
     }
 
     void setMass(float m) {
         mass = std::clamp(m, 0.1f, 500.0f);
+        updateMassData();
+    }
+
+    void setRadius(float r) {
+        radius = std::clamp(r, 0.2f, 3.0f);
+        width = radius * 2.0f;
+        height = radius * 2.0f;
         updateMassData();
     }
 
@@ -92,14 +107,10 @@ struct Body {
 
     bool containsPoint(Vec2 p) const {
         if (shape == ShapeType::CIRCLE) {
-            return (p-pos).length() <= radius;
+            return (p - pos).length() <= radius;
         }
 
-        Vec2 d = p - pos;
-        float c = std::cos(-angle);
-        float s = std::sin(-angle);
-        Vec2 localP = {d.x *c - d.y *s, d.x * s + d.y * c};
-
-        return (std::abs(localP.x)<= width *0.5f && std::abs(localP.y)<= height * 0.5f);
+        Vec2 localP = worldToLocal(p);
+        return (std::abs(localP.x) <= width * 0.5f && std::abs(localP.y) <= height * 0.5f);
     }
 };
