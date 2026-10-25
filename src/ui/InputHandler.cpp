@@ -333,6 +333,7 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
     if (IsKeyPressed(KEY_THREE)) { state.activeTool = ToolType::ADD_SUPPORT; state.ropeStartBodyId = -1; }
     if (IsKeyPressed(KEY_FOUR))  { state.activeTool = ToolType::ADD_ROPE;    state.ropeStartBodyId = -1; }
     if (IsKeyPressed(KEY_FIVE))  { state.activeTool = ToolType::DELETE_OBJ;  state.ropeStartBodyId = -1; }
+    if (IsKeyPressed(KEY_SIX))  { state.activeTool = ToolType::ADD_CIRCLE;  state.ropeStartBodyId = -1; }
 }
 
 void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm) {
@@ -428,6 +429,15 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                     world.saveSnapshot();
                     break;
                 }
+                case ToolType::ADD_CIRCLE: {
+                    Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
+                    int id = world.createCircle(safePos, 0.5f, 1.0f, false);
+                    world.tryAttachBodyToFreeRopes(id);
+                    state.selectedBodyId = id;
+                    state.selectedRopeId = -1;
+                    world.updateStaticTelemetry();
+                    break;
+                }
                 case ToolType::ADD_ROPE: {
                     if (state.ropeStartBodyId == -1) {
                         if (state.hoveredBodyId != -1) {
@@ -467,6 +477,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                     }
                     break;
                 }
+
                 case ToolType::DELETE_OBJ: {
                     if (state.hoveredBodyId != -1) {
                         if (state.selectedBodyId == state.hoveredBodyId) state.selectedBodyId = -1;

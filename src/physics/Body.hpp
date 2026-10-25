@@ -5,9 +5,15 @@
 #include <cmath>
 #include <array>
 
+enum class ShapeType { BOX = 0, CIRCLE};
+
+
 struct Body {
     int id = 0;
     std::string name = "Груз";
+
+    ShapeType shape = ShapeType::BOX;
+    float radius = 0.5f;
 
     Vec2 pos = {0.0f, 0.0f};
     Vec2 vel = {0.0f, 0.0f};
@@ -27,6 +33,7 @@ struct Body {
     bool supportLocked = true;
     bool canRotate = true;
 
+
     int supportedBy = -1;
     float normalForce = 0.0f;
     float topLoadForce = 0.0f;
@@ -40,21 +47,19 @@ struct Body {
     }
 
     void updateMassData() {
-        mass = std::clamp(mass, 0.1f, 500.0f);
-        width = std::clamp(width, 0.4f, 8.0f);
-        height = std::clamp(height, 0.2f, 6.0f);
-
-        inertia = (1.0f / 12.0f) * mass * (width * width + height * height);
-
         if (isStatic) {
-            invMass = 0.0f;
-            invInertia = 0.0f;
-            vel = {0.0f, 0.0f};
-            angVel = 0.0f;
-            angle = 0.0f;
+            inertia = 0.0f;
+            return;
+        }
+        if (!canRotate) {
+            inertia = 0.0f;
+            return;
+        }
+
+        if (shape == ShapeType::CIRCLE) {
+            inertia =  0.5f * mass * (radius * radius);
         } else {
-            invMass = 1.0f / mass;
-            invInertia = canRotate ? (1.0f / inertia) : 0.0f;
+        inertia = (1.0f / 12.0f)*mass*(width*width + height * height);
         }
     }
 
@@ -85,10 +90,16 @@ struct Body {
         return (worldPt - pos).rotated(-angle);
     }
 
-    bool containsPoint(const Vec2& pt) const {
-        Vec2 local = worldToLocal(pt);
-        float pad = isStatic ? 0.08f : 0.0f;
-        return (local.x >= -width * 0.5f - pad && local.x <= width * 0.5f + pad &&
-                local.y >= -height * 0.5f - pad && local.y <= height * 0.5f + pad);
+    bool containsPoint(Vec2 p) const {
+        if (shape == ShapeType::CIRCLE) {
+            return (p-pos).length() <= radius;
+        }
+
+        Vec2 d = p - pos;
+        float c = std::cos(-angle);
+        float s = std::sin(-angle);
+        Vec2 localP = {d.x *c - d.y *s, d.x * s + d.y * c};
+
+        return (std::abs(localP.x)<= width *0.5f && std::abs(localP.y)<= height * 0.5f);
     }
 };

@@ -39,6 +39,7 @@ public:
     float rightWallX = 6.0f;
     float ceilingY = 9.0f;
 
+    int createCircle(Vec2 pos, float radius, float mass, bool isStatic = false);
     int createBody(Vec2 pos, float w, float h, float mass, bool isStatic = false);
     int addRope(int idA, int idB, Vec2 offA, Vec2 offB, float length, float stiffness = 180.0f, bool isRigid = false);
     int addFreeRope(int idA, Vec2 offA, Vec2 endWorldPos, float length, float stiffness = 180.0f, bool isRigid = false);

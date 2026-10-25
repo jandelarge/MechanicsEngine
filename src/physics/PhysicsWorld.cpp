@@ -135,6 +135,22 @@ int PhysicsWorld::createBody(Vec2 pos, float w, float h, float mass, bool isStat
     return id;
 }
 
+int PhysicsWorld::createCircle(Vec2 pos, float radius, float mass, bool isStatic) {
+    Body b;
+    b.id = (int)bodies.size();
+    b.shape = ShapeType::CIRCLE;
+    b.pos = pos;
+    b.radius = radius;
+    b.width = radius * 2.0f;
+    b.height = radius * 2.0f;
+    b.mass = mass;
+    b.isStatic = isStatic;
+    b.name = "ЛИЖИ МОИ ЯЙЦА";
+    b.updateMassData();
+    bodies.push_back(b);
+    return b.id;
+}
+
 int PhysicsWorld::addRope(int idA, int idB, Vec2 offA, Vec2 offB, float length, float stiffness, bool isRigid) {
     if (idA == idB || idA < 0) return -1;
     int id = (int)ropes.size();

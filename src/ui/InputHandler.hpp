@@ -3,9 +3,11 @@
 #include "raylib.h"
 #include <string>
 
+
 enum class ToolType {
     SELECT_MOVE = 0,
     ADD_BLOCK,
+    ADD_CIRCLE,
     ADD_SUPPORT,
     ADD_ROPE,
     DELETE_OBJ
@@ -26,6 +28,7 @@ enum class EditField {
     WORLD_SUBSTEPS,
     NEW_ROPE_LENGTH
 };
+
 
 struct AppState {
     bool paused = true;

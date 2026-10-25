@@ -455,24 +455,7 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
     }
 
     // 2. Отрисовка тел
-    for (const auto& b : world.bodies) {
-        Vector2 scr = worldToScreen(b.pos, sw, sh);
-        float bw = b.width * ppm;
-        float bh = b.height * ppm;
-        bool isSelected = (b.id == state.hoveredBodyId) || (b.id == state.draggedBodyId) || (b.id == state.selectedBodyId);
 
-        if (b.isStatic) {
-            drawHatchedSupport(scr, bw, bh, isSelected, !b.supportLocked);
-        } else {
-            drawRotatedBlock(b, scr, bw, bh, isSelected, b.id == state.selectedBodyId);
-        }
-
-        if (state.activeTool == ToolType::ADD_ROPE && b.id == state.hoveredBodyId) {
-            Vec2 snap = world.getSnapOffset(b.id, state.mouseWorldPos);
-            Vector2 snapScr = worldToScreen(b.localToWorld(snap), sw, sh);
-            DrawCircleV(snapScr, 5.5f, COL_GOLD);
-        }
-    }
 
     // 3. Векторы сил
     const float FORCE_SCALE = 0.9f;
