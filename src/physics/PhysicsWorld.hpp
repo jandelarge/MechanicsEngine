@@ -37,9 +37,6 @@ public:
     WorldSnapshot snapshot;
 
     float groundY = 0.5f;
-    float leftWallX = -8.0f;
-    float rightWallX = 6.0f;
-    float ceilingY = 9.0f;
 
     int createCircle(Vec2 pos, float radius, float mass, bool isStatic = false);
     int createBody(Vec2 pos, float w, float h, float mass, bool isStatic = false);
@@ -55,6 +52,7 @@ public:
     void removeRope(int id);
     void clearScene();
     void setupDefaultScene();
+    void loadLabPreset(int presetId);
 
     void saveSnapshot();
     void restoreSnapshot();
