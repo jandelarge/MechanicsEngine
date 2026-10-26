@@ -20,6 +20,7 @@ private:
     void drawLiquidDock(int sh, const AppState& state) const;
     void drawDockIcon(int index, Rectangle btnRect, bool active, bool paused, Color iconCol) const;
     void drawCreationIcon(int itemIndex, Vector2 center, Color col, bool active) const;
+    void drawSpringCoil(Vector2 sA, Vector2 sB, Color col, float thickness) const;
     void drawInspector(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
     void drawValueInputRow(float x, float y, const char* label, const char* currentValText,
                            bool editing, const std::string& inputBuffer) const;

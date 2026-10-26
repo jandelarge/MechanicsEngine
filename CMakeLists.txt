@@ -14,14 +14,20 @@ FetchContent_MakeAvailable(raylib)
 
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 
-add_executable(MechanicsEngine ${SOURCES})
+add_executable(MechanicsEngine WIN32
+        src/main.cpp
+        src/physics/PhysicsWorld.cpp
+        src/ui/InputHandler.cpp
+        src/ui/Renderer.cpp
+)
 target_include_directories(MechanicsEngine PRIVATE src)
 target_link_libraries(MechanicsEngine PRIVATE raylib)
+target_link_options(MechanicsEngine PRIVATE -static -static-libgcc -static-libstdc++ -mwindows)
 
 if (MSVC)
     target_compile_options(MechanicsEngine PRIVATE /W0)
 endif()
 
 if (MINGW)
-    target_link_options(MechanicsEngine PRIVATE -static -static-libgcc -static-libstdc++ -mwindows)
+    target_link_options(MechanicsEngine PRIVATE -static -static-libgcc -static-libstdc++ )
 endif()

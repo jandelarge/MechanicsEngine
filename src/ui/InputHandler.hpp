@@ -9,6 +9,7 @@ enum class ToolType {
     ADD_CIRCLE,
     ADD_SUPPORT,
     ADD_ROPE,
+    ADD_SPRING,
     DELETE_OBJ
 };
 
@@ -20,6 +21,7 @@ enum class EditField {
     BODY_WIDTH,
     BODY_HEIGHT,
     BODY_RADIUS,
+    BODY_FORCE_X,
     SUPPORT_X,
     SUPPORT_Y,
     SUPPORT_WIDTH,
@@ -36,7 +38,7 @@ struct AppState {
     int forceViewMode = 0; // 0: при наведении, 1: все, 2: скрыты
 
     ToolType activeTool = ToolType::SELECT_MOVE;
-    bool addMenuOpen = false; // Открыто ли всплывающее меню [+]
+    bool addMenuOpen = false;
 
     int selectedBodyId = -1;
     int selectedRopeId = -1;
@@ -48,6 +50,10 @@ struct AppState {
 
     int draggedBodyId = -1;
     int draggedFreeRopeId = -1;
+
+    // Состояние растягивания новой опоры зажатой ЛКМ
+    int creatingSupportBodyId = -1;
+    Vec2 supportStartPos = {0.0f, 0.0f};
 
     int ropeStartBodyId = -1;
     Vec2 ropeStartOffset = {0.0f, 0.0f};

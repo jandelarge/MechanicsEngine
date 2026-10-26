@@ -4,14 +4,11 @@
 #include "ui/Renderer.hpp"
 
 int main() {
+    SetTraceLogLevel(LOG_NONE);
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(1320, 780, "Собака ебака");
     SetExitKey(KEY_NULL);
-    //Image icon = LoadImage("path/to/your_icon.png");
-    //if (icon.data != NULL) {
-        //SetWindowIcon(icon);
-        //UnloadImage(icon);
-    //}
+
     SetWindowMinSize(960, 600);
     SetTargetFPS(60);
 

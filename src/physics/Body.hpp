@@ -28,7 +28,9 @@ struct Body {
     float invInertia = 1.0f;
 
     float friction = 0.6f;
-    float restitution = 0.1f; // Коэффициент упругости (отскока)
+    float restitution = 0.1f;
+    float appliedForceX = 0.0f;   // Постоянная внешняя горизонтальная сила F (Н)
+
     bool isStatic = false;
     bool supportLocked = true;
     bool canRotate = true;
