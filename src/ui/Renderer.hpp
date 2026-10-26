@@ -5,7 +5,10 @@
 
 class Renderer {
 public:
+    float basePpm = 70.0f;
     float ppm = 70.0f;
+    Vec2 camPos = {-0.8f, 4.3f};
+
     Font fontSmall{};
     Font fontMain{};
     Font fontBold{};
@@ -17,6 +20,7 @@ public:
     Vector2 worldToScreen(Vec2 wPos, int sw, int sh) const;
 
 private:
+    void drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int sh) const;
     void drawLiquidDock(int sh, const AppState& state) const;
     void drawDockIcon(int index, Rectangle btnRect, bool active, bool paused, Color iconCol) const;
     void drawCreationIcon(int itemIndex, Vector2 center, Color col, bool active) const;

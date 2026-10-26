@@ -305,8 +305,9 @@ Vec2 PhysicsWorld::findSafeSpawnPos(Vec2 desiredPos, float w, float h) const {
         if (!overlapped) break;
     }
 
-    temp.pos.x = std::clamp(temp.pos.x, leftWallX + w * 0.5f, rightWallX - w * 0.5f);
-    temp.pos.y = std::clamp(temp.pos.y, groundY + h * 0.5f, ceilingY - h * 0.5f);
+    if (temp.pos.y - h * 0.5f < groundY) {
+        temp.pos.y = groundY + h * 0.5f;
+    }
     return temp.pos;
 }
 
@@ -421,6 +422,102 @@ void PhysicsWorld::setupDefaultScene() {
     saveSnapshot();
 }
 
+void PhysicsWorld::loadLabPreset(int presetId) {
+    clearScene();
+    const float DEG2RAD_VAL = 0.0174532925f;
+
+    switch (presetId) {
+        case 1: {
+            // Лаб. 1: Наклонная плоскость (Качение шара vs Скольжение бруска)
+            float tilt = -20.0f * DEG2RAD_VAL;
+
+            // Верхний желоб (для шара)
+            int rampTop = createBody({-1.2f, 5.8f}, 7.2f, 0.26f, 1.0f, true);
+            bodies[rampTop].angle = tilt;
+            bodies[rampTop].friction = 0.20f;
+
+            Vec2 topStart = bodies[rampTop].localToWorld({-2.8f, 0.13f + 0.45f});
+            int ballId = createCircle(topStart, 0.45f, 2.0f, false);
+            bodies[ballId].friction = 0.20f;
+            bodies[ballId].restitution = 0.05f;
+
+            // Нижний желоб (для бруска)
+            int rampBot = createBody({-1.2f, 2.6f}, 7.2f, 0.26f, 1.0f, true);
+            bodies[rampBot].angle = tilt;
+            bodies[rampBot].friction = 0.20f;
+
+            Vec2 botStart = bodies[rampBot].localToWorld({-2.8f, 0.13f + 0.45f});
+            int boxId = createBody(botStart, 0.9f, 0.9f, 2.0f, false);
+            bodies[boxId].angle = tilt;
+            bodies[boxId].friction = 0.20f;
+
+            // Финишный бортик справа
+            int stopper = createBody({4.9f, 1.9f}, 2.8f, 0.26f, 1.0f, true);
+            bodies[stopper].angle = 70.0f * DEG2RAD_VAL;
+            break;
+        }
+        case 2: {
+            // Лаб. 2: Гармонические колебания (Закон Гука и Маятник)
+            int beam = createBody({0.0f, 7.6f}, 8.5f, 0.26f, 1.0f, true);
+
+            // 1. Мягкая пружина (k = 90 Н/м)
+            int b1 = createBody({-3.0f, 3.6f}, 1.1f, 1.1f, 3.0f, false);
+            addRope(beam, b1, {-3.0f, -0.13f}, {0.0f, 0.55f}, 2.4f, 90.0f, false, true);
+
+            // 2. Жёсткая пружина (k = 320 Н/м)
+            int b2 = createBody({0.0f, 3.6f}, 1.1f, 1.1f, 3.0f, false);
+            addRope(beam, b2, {0.0f, -0.13f}, {0.0f, 0.55f}, 2.4f, 320.0f, false, true);
+
+            // 3. Нитяной маятник, отведённый на угол
+            int ball = createCircle({4.5f, 5.6f}, 0.48f, 2.5f, false);
+            addRope(beam, ball, {2.8f, -0.13f}, {0.0f, 0.0f}, 2.6f, 200.0f, true, false);
+            break;
+        }
+        case 3: {
+            // Лаб. 3: Закон сохранения импульса (Колыбель Ньютона на гладкой дорожке)
+            float tilt = -18.0f * DEG2RAD_VAL;
+            int ramp = createBody({-4.6f, 1.04f}, 4.2f, 0.26f, 1.0f, true);
+            bodies[ramp].angle = tilt;
+            bodies[ramp].friction = 0.0f;
+
+            Vec2 launchPos = bodies[ramp].localToWorld({-1.4f, 0.13f + 0.5f});
+            int striker = createCircle(launchPos, 0.5f, 2.0f, false);
+            bodies[striker].restitution = 0.99f;
+            bodies[striker].friction = 0.0f;
+            bodies[striker].canRotate = false;
+
+            for (int i = 0; i < 4; ++i) {
+                int id = createCircle({-1.2f + i * 1.015f, groundY + 0.5f}, 0.5f, 2.0f, false);
+                bodies[id].restitution = 0.99f;
+                bodies[id].friction = 0.0f;
+                bodies[id].canRotate = false;
+            }
+            break;
+        }
+        case 4: {
+            // Лаб. 4: Порог трения покоя (Нагруженное тело vs Свободное при одинаковой тяге F = 18 Н)
+            int leftBase = createBody({-3.2f, groundY + 0.5f}, 1.4f, 1.0f, 2.0f, false);
+            bodies[leftBase].friction = 0.5f;
+            bodies[leftBase].appliedForceX = 18.0f;
+
+            int topWeight = createBody({-3.2f, groundY + 1.5f}, 1.0f, 1.0f, 3.0f, false);
+            bodies[topWeight].friction = 0.5f;
+
+            int rightSingle = createBody({1.2f, groundY + 0.5f}, 1.4f, 1.0f, 2.0f, false);
+            bodies[rightSingle].friction = 0.5f;
+            bodies[rightSingle].appliedForceX = 18.0f;
+            break;
+        }
+        default:
+            setupDefaultScene();
+            return;
+    }
+
+    resolveEditorOverlap(-1);
+    updateStaticTelemetry();
+    saveSnapshot();
+}
+
 void PhysicsWorld::saveSnapshot() {
     snapshot.bodies = bodies;
     snapshot.ropes = ropes;
@@ -485,40 +582,7 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
     std::vector<float> frameRopeTensionSum(ropes.size(), 0.0f);
 
     for (int s = 0; s < steps; ++s) {
-        for (auto& b : bodies) {
-            if (b.isStatic) continue;
-
-            float speed = b.vel.length();
-            float airDrag = 0.05f + 0.02f * speed;
-            float rotDrag = (b.shape == ShapeType::CIRCLE) ? 0.05f : 1.5f;
-
-            b.vel *= std::max(0.0f, 1.0f - airDrag * subDt);
-            b.angVel *= std::max(0.0f, 1.0f - rotDrag * subDt);
-
-            // Внешняя горизонтальная сила тяги F и гравитация g
-            b.vel.x += (b.appliedForceX * b.invMass) * subDt;
-            b.vel.y -= G * subDt;
-
-            if (b.id == draggedBodyId) {
-                Vec2 err = targetBodyPos - b.pos;
-                Vec2 desiredVel = err * 24.0f;
-                float maxMouseSpeed = 12.0f;
-                if (desiredVel.length() > maxMouseSpeed) {
-                    desiredVel = desiredVel.normalized() * maxMouseSpeed;
-                }
-
-                Vec2 reqAcc = (desiredVel - b.vel) / subDt;
-                Vec2 mouseForce = reqAcc * b.mass;
-                float maxForce = std::max(180.0f, b.mass * G * 4.0f);
-                if (mouseForce.length() > maxForce) {
-                    mouseForce = mouseForce.normalized() * maxForce;
-                }
-                b.vel += mouseForce * (b.invMass * subDt);
-                b.angVel *= 0.90f;
-            }
-        }
-
-        // Упругие тросы и двусторонние пружины Гука
+        // 1. Упругие нити и пружины
         for (size_t i = 0; i < ropes.size(); ++i) {
             RopeLink& r = ropes[i];
             Body& a = bodies[r.idA];
@@ -528,7 +592,7 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
             if (r.idB == -1) {
                 if ((int)i == draggedFreeRopeId) {
                     Vec2 d = targetBodyPos - pA;
-                    float len = std::clamp(d.length(), 0.3f, 7.0f);
+                    float len = std::clamp(d.length(), 0.3f, 12.0f);
                     r.restLength = len;
                     r.currentLength = len;
                     Vec2 n = (d.length() > 1e-4f) ? d.normalized() : Vec2{0.0f, -1.0f};
@@ -568,7 +632,6 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
             if (!r.isRigid) {
                 float ext = dist - r.restLength;
-                // Обычная нить работает только при ext > 0, а пружина — при любой деформации (и сжатие, и растяжение)
                 if (r.isSpring || ext > 0.0f) {
                     Vec2 n = delta / dist;
                     Vec2 vA = a.vel + Vec2::cross(a.angVel, rA);
@@ -591,6 +654,39 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
                     frameRopeTensionSum[i] += std::abs(springF);
                 }
+            }
+        }
+
+        // 2. Сопротивление воздуха, внешняя сила F и гравитация g
+        for (auto& b : bodies) {
+            if (b.isStatic) continue;
+
+            float speed = b.vel.length();
+            float airDrag = 0.05f + 0.02f * speed;
+            float rotDrag = (b.shape == ShapeType::CIRCLE) ? 0.05f : 1.5f;
+
+            b.vel *= std::max(0.0f, 1.0f - airDrag * subDt);
+            b.angVel *= std::max(0.0f, 1.0f - rotDrag * subDt);
+
+            b.vel.x += (b.appliedForceX * b.invMass) * subDt;
+            b.vel.y -= G * subDt;
+
+            if (b.id == draggedBodyId) {
+                Vec2 err = targetBodyPos - b.pos;
+                Vec2 desiredVel = err * 24.0f;
+                float maxMouseSpeed = 12.0f;
+                if (desiredVel.length() > maxMouseSpeed) {
+                    desiredVel = desiredVel.normalized() * maxMouseSpeed;
+                }
+
+                Vec2 reqAcc = (desiredVel - b.vel) / subDt;
+                Vec2 mouseForce = reqAcc * b.mass;
+                float maxForce = std::max(180.0f, b.mass * G * 4.0f);
+                if (mouseForce.length() > maxForce) {
+                    mouseForce = mouseForce.normalized() * maxForce;
+                }
+                b.vel += mouseForce * (b.invMass * subDt);
+                b.angVel *= 0.90f;
             }
         }
 
@@ -619,6 +715,7 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
         solvePositionConstraints(draggedBodyId);
         enforceBoundaries();
 
+        std::vector<float> subNetFriction(bodies.size(), 0.0f);
         for (const auto& c : contacts) {
             if (c.jnAccum > 1e-6f) {
                 if (c.idA >= 0 && bodies[c.idA].shape == ShapeType::CIRCLE && !bodies[c.idA].isStatic) {
@@ -631,25 +728,34 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
             if (c.idA == -1) {
                 frameNormalImp[c.idB] += c.jnAccum;
-                frameFrictionImp[c.idB] += std::abs(c.jtAccum);
+                subNetFriction[c.idB] += c.jtAccum;
             } else if (std::abs(c.normal.y) > 0.45f) {
                 if (c.normal.y > 0.0f) {
                     frameNormalImp[c.idB] += c.jnAccum;
                     frameTopImp[c.idA] += c.jnAccum;
+                    subNetFriction[c.idB] += c.jtAccum;
                 } else {
                     frameNormalImp[c.idA] += c.jnAccum;
                     frameTopImp[c.idB] += c.jnAccum;
+                    subNetFriction[c.idA] -= c.jtAccum;
                 }
-                frameFrictionImp[c.idA] += std::abs(c.jtAccum);
-                frameFrictionImp[c.idB] += std::abs(c.jtAccum);
             }
+        }
+
+        for (size_t i = 0; i < bodies.size(); ++i) {
+            frameFrictionImp[i] += std::abs(subNetFriction[i]);
         }
     }
 
     for (size_t i = 0; i < bodies.size(); ++i) {
         bodies[i].normalForce = frameNormalImp[i] / dt;
         bodies[i].topLoadForce = frameTopImp[i] / dt;
-        bodies[i].frictionForce = frameFrictionImp[i] / dt;
+
+        float fTr = frameFrictionImp[i] / dt;
+        if (bodies[i].vel.lengthSq() < 0.0004f && std::abs(bodies[i].appliedForceX) < 0.05f && fTr < 0.5f) {
+            fTr = 0.0f;
+        }
+        bodies[i].frictionForce = fTr;
     }
 
     for (size_t i = 0; i < ropes.size(); ++i) {
@@ -695,7 +801,8 @@ void PhysicsWorld::buildContacts() {
         Vec2 vB = b.vel + Vec2::cross(b.angVel, c.rB);
         float vn = Vec2::dot(vB - vA, c.normal);
 
-        if (vn < -0.75f) {
+        float bounceThreshold = (c.idA == -1) ? -2.2f : -0.35f;
+        if (vn < bounceThreshold) {
             c.restitutionVel = -c.restitution * vn;
         } else {
             c.restitutionVel = 0.0f;
@@ -834,7 +941,6 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
             if (totalW <= 1e-6f) continue;
 
             if (r.isRigid && r.isSpring) {
-                // Жесткий стержень: держит фиксированную длину в обе стороны (и тянет, и толкает)
                 Vec2 vA = a.vel + Vec2::cross(a.angVel, rA);
                 Vec2 vB = b.vel + Vec2::cross(b.angVel, rB);
                 float vn = Vec2::dot(vB - vA, n);
@@ -977,6 +1083,10 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
             Vec2 vA = a ? (a->vel + Vec2::cross(a->angVel, c.rA)) : Vec2{0.0f, 0.0f};
             Vec2 vB = b.vel + Vec2::cross(b.angVel, c.rB);
             float vn = Vec2::dot(vB - vA, c.normal);
+
+            if (c.jnAccum == 0.0f && c.idA >= 0 && vn < -0.35f) {
+                c.restitutionVel = std::max(c.restitutionVel, -c.restitution * vn);
+            }
 
             float dJn = (-vn + c.restitutionVel) * c.effMassN;
             float newJn = std::max(0.0f, c.jnAccum + dJn);
@@ -1137,39 +1247,18 @@ void PhysicsWorld::enforceBoundaries() {
     for (auto& b : bodies) {
         if (b.isStatic) continue;
 
-        float minX, maxX, minY, maxY;
+        float minY;
         if (b.shape == ShapeType::CIRCLE) {
-            minX = b.pos.x - b.radius;
-            maxX = b.pos.x + b.radius;
             minY = b.pos.y - b.radius;
-            maxY = b.pos.y + b.radius;
         } else {
             auto verts = b.getVertices();
-            minX = verts[0].x; maxX = verts[0].x;
-            minY = verts[0].y; maxY = verts[0].y;
-            for (int i = 1; i < 4; ++i) {
-                minX = std::min(minX, verts[i].x);
-                maxX = std::max(maxX, verts[i].x);
-                minY = std::min(minY, verts[i].y);
-                maxY = std::max(maxY, verts[i].y);
-            }
+            minY = std::min({verts[0].y, verts[1].y, verts[2].y, verts[3].y});
         }
 
         if (minY < groundY) {
             b.pos.y += (groundY - minY);
-            if (b.vel.y < 0.0f) b.vel.y = -b.vel.y * b.restitution;
-        }
-        if (maxY > ceilingY) {
-            b.pos.y -= (maxY - ceilingY);
-            if (b.vel.y > 0.0f) b.vel.y = -b.vel.y * b.restitution;
-        }
-        if (minX < leftWallX) {
-            b.pos.x += (leftWallX - minX);
-            if (b.vel.x < 0.0f) b.vel.x = -b.vel.x * b.restitution;
-        }
-        if (maxX > rightWallX) {
-            b.pos.x -= (maxX - rightWallX);
-            if (b.vel.x > 0.0f) b.vel.x = -b.vel.x * b.restitution;
+            if (b.vel.y < -2.2f) b.vel.y = -b.vel.y * b.restitution;
+            else if (b.vel.y < 0.0f) b.vel.y = 0.0f;
         }
     }
 }
@@ -1251,7 +1340,6 @@ void PhysicsWorld::updateStaticTelemetry() {
                 b.normalForce = totalDown;
                 bodies[b.supportedBy].topLoadForce += totalDown;
             }
-            // Статическая сила трения в ответ на приложенную внешнюю силу F
             if (std::abs(b.appliedForceX) > 0.01f) {
                 b.frictionForce = std::min(std::abs(b.appliedForceX), b.friction * b.normalForce);
             }

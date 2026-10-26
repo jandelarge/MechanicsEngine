@@ -40,6 +40,13 @@ struct AppState {
     ToolType activeTool = ToolType::SELECT_MOVE;
     bool addMenuOpen = false;
 
+    // Независимая камера бесконечного полотна
+    Vec2 camPos = {-0.8f, 4.3f};
+    float camZoom = 1.0f;
+    bool isPanning = false;
+    Vector2 panStartMouse = {0.0f, 0.0f};
+    Vec2 panStartCam = {-0.8f, 4.3f};
+
     int selectedBodyId = -1;
     int selectedRopeId = -1;
 
@@ -51,7 +58,6 @@ struct AppState {
     int draggedBodyId = -1;
     int draggedFreeRopeId = -1;
 
-    // Состояние растягивания новой опоры зажатой ЛКМ
     int creatingSupportBodyId = -1;
     Vec2 supportStartPos = {0.0f, 0.0f};
 

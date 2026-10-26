@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 
 static const Color COL_BG_DARK     = {25, 23, 22, 255};    // #191716
 static const Color COL_PANEL_BG    = {32, 29, 28, 255};
@@ -46,9 +47,56 @@ void Renderer::unload() {
 Vector2 Renderer::worldToScreen(Vec2 wPos, int sw, int sh) const {
     float canvasWidth = (float)(sw - InputHandler::INSPECTOR_WIDTH);
     return {
-        canvasWidth * 0.5f + wPos.x * ppm,
-        sh * 0.84f - wPos.y * ppm
+        canvasWidth * 0.5f + (wPos.x - camPos.x) * ppm,
+        sh * 0.5f - (wPos.y - camPos.y) * ppm
     };
+}
+
+void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int sh) const {
+    int canvasW = sw - InputHandler::INSPECTOR_WIDTH;
+    float leftW   = camPos.x - (canvasW * 0.5f) / ppm;
+    float rightW  = camPos.x + (canvasW * 0.5f) / ppm;
+    float topW    = camPos.y + (sh * 0.5f) / ppm;
+
+    int gridStep = (ppm < 28.0f) ? 5 : 1;
+    int startX = (int)std::floor(leftW / gridStep) * gridStep;
+    int endX   = (int)std::ceil(rightW / gridStep) * gridStep;
+
+    // Вертикальные линии сетки (начинаются строго от пола и идут вверх)
+    for (int x = startX; x <= endX; x += gridStep) {
+        Vector2 pTop = worldToScreen({(float)x, topW}, sw, sh);
+        Vector2 pBot = worldToScreen({(float)x, world.groundY}, sw, sh);
+        bool isMajor = (x % 5 == 0);
+        DrawLineV(pTop, pBot, isMajor ? Color{40, 36, 34, 255} : Color{31, 28, 27, 255});
+    }
+
+    // Горизонтальные линии сетки: отсчитываются ровно от уровня пола world.groundY,
+    // чтобы самая первая клетка на полу была полным квадратом (1 м, 2 м, ... 5 м над полом)
+    int maxStepsY = (int)std::ceil((topW - world.groundY) / gridStep);
+    for (int k = gridStep; k <= maxStepsY * gridStep; k += gridStep) {
+        float y = world.groundY + (float)k;
+        if (y > topW) break;
+        Vector2 pL = worldToScreen({leftW, y}, sw, sh);
+        Vector2 pR = worldToScreen({rightW, y}, sw, sh);
+        bool isMajor = (k % 5 == 0);
+        DrawLineV(pL, pR, isMajor ? Color{40, 36, 34, 255} : Color{31, 28, 27, 255});
+    }
+
+    // Бесконечный пол с разметкой метров
+    Vector2 gL = worldToScreen({leftW, world.groundY}, sw, sh);
+    Vector2 gR = worldToScreen({rightW, world.groundY}, sw, sh);
+    DrawLineEx(gL, gR, 2.0f, COL_GOLD_DIM);
+
+    for (int x = startX; x <= endX; x += gridStep) {
+        Vector2 pt = worldToScreen({(float)x, world.groundY}, sw, sh);
+        bool isMajor = (x % 5 == 0);
+        DrawLineEx(pt, {pt.x, pt.y + (isMajor ? 8.0f : 4.0f)}, isMajor ? 1.8f : 1.0f, COL_GOLD_DIM);
+        if (isMajor) {
+            const char* lbl = TextFormat("%d м", x);
+            Vector2 ts = MeasureTextEx(fontSmall, lbl, 14, 1.0f);
+            DrawTextEx(fontSmall, lbl, {pt.x - ts.x * 0.5f, pt.y + 10.0f}, 14, 1.0f, Fade(COL_TEXT_MUTED, 0.75f));
+        }
+    }
 }
 
 void Renderer::drawButton(Rectangle r, const char* text, bool active, Color accent) const {
@@ -152,11 +200,9 @@ void Renderer::drawCreationIcon(int itemIndex, Vector2 center, Color col, bool a
             break;
         }
         case 2: { // Опора
-            DrawLineEx({cx - 9.5f, cy + 3.0f}, {cx + 9.5f, cy + 3.0f}, 2.2f, col);
-            for (int i = -2; i <= 2; ++i) {
-                float sx = cx + i * 4.2f + 1.5f;
-                DrawLineEx({sx, cy + 3.0f}, {sx - 3.8f, cy - 3.8f}, 1.5f, col);
-            }
+            Rectangle sup = {cx - 9.5f, cy - 3.5f, 19.0f, 7.0f};
+            DrawRectangleRounded(sup, 0.8f, 6, Fade(col, active ? 0.28f : 0.12f));
+            DrawRectangleRoundedLinesEx(sup, 0.8f, 6, 1.6f, col);
             break;
         }
         case 3: { // Нить
@@ -169,7 +215,7 @@ void Renderer::drawCreationIcon(int itemIndex, Vector2 center, Color col, bool a
             DrawCircleLines((int)b.x, (int)b.y, 3.0f, col);
             break;
         }
-        case 4: { // Пружина (зигзаг)
+        case 4: { // Пружина
             Vector2 pts[6] = {
                 {cx - 7.0f, cy + 7.0f},
                 {cx - 5.5f, cy + 1.5f},
@@ -307,7 +353,6 @@ void Renderer::drawLiquidDock(int sh, const AppState& state) const {
         }
     }
 
-    // Всплывающее меню [+] с 5 объектами [1..5]
     if (state.addMenuOpen) {
         Rectangle menu = InputHandler::getAddMenuRect(sh);
 
@@ -376,7 +421,7 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
                               state.editingField == EditField::SUPPORT_ANGLE, state.inputBuffer);
 
             drawButton({x, topY + 302, w, 26}, "Выровнять горизонтально (0\xC2\xB0)", false, COL_GOLD);
-            DrawTextEx(fontSmall, "* Колёсико мыши — быстрый наклон", {x, topY + 336}, 14, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontSmall, "* Shift + Колёсико — наклон опоры", {x, topY + 336}, 14, 1.0f, COL_TEXT_MUTED);
 
             drawButton({x, (float)sh - 48.0f, w, 32}, "Удалить опору", false, COL_WINE_BRIGHT);
             return;
@@ -501,26 +546,114 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
     drawValueInputRow(x, topY + 188, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
                       state.editingField == EditField::NEW_ROPE_LENGTH, state.inputBuffer);
 
-    drawButton({x, topY + 250, w, 30}, "Сбросить к демо-сцене", false, COL_GOLD);
-    drawButton({x, topY + 288, w, 30}, "Очистить всю сцену", false, COL_GOLD);
+    drawButton({x, topY + 244, w, 28}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
+
+    float sepY = topY + 282.0f;
+    DrawLine((int)x, (int)sepY, (int)(x + w), (int)sepY, {64, 54, 50, 255});
+    DrawTextEx(fontBold, "Лабораторные стенды", {x, sepY + 8.0f}, 17, 1.0f, COL_GOLD);
+
+    float labY = topY + 314.0f;
+    drawButton({x, labY + 0 * 34.0f, w, 29.0f}, "Лаб. 1: Горка (Шар vs Брусок)", false, COL_GOLD);
+    drawButton({x, labY + 1 * 34.0f, w, 29.0f}, "Лаб. 2: Закон Гука и Маятник", false, COL_GOLD);
+    drawButton({x, labY + 2 * 34.0f, w, 29.0f}, "Лаб. 3: Импульс и соударение", false, COL_GOLD);
+    drawButton({x, labY + 3 * 34.0f, w, 29.0f}, "Лаб. 4: Статика и предел трения", false, COL_GOLD);
+
+    drawButton({x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f}, "Демо-сцена", false, COL_GOLD);
+    drawButton({x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f}, "Пустой лист", false, COL_WINE_BRIGHT);
 }
 
 void Renderer::drawHatchedSupport(const Body& b, int sw, int sh, bool highlighted, bool unlocked) const {
-    Vec2 leftW = b.localToWorld({-b.width * 0.5f, 0.0f});
-    Vec2 rightW = b.localToWorld({b.width * 0.5f, 0.0f});
-    Vector2 p1 = worldToScreen(leftW, sw, sh);
-    Vector2 p2 = worldToScreen(rightW, sw, sh);
+    float hx = b.width * 0.5f;
+    float hy = b.height * 0.5f;
+    // Радиус закругления краев в стиле нижнего дока (почти капсула)
+    float r = std::min(hy * 0.88f, hx * 0.45f);
+    float innerX = std::max(0.0f, hx - r);
+    float innerY = std::max(0.0f, hy - r);
 
-    Color lineCol = highlighted ? COL_GOLD : (unlocked ? COL_WINE_BRIGHT : COL_TEXT_CREAM);
-    DrawLineEx(p1, p2, highlighted ? 3.5f : 3.0f, lineCol);
+    float bw = b.width * ppm;
+    float bh = b.height * ppm;
+    float rScr = r * ppm;
+    float deg = -b.angle * 57.29578f;
 
-    int steps = std::max(4, (int)(b.width * 5.0f));
-    for (int i = 0; i <= steps; ++i) {
-        float t = (float)i / (float)steps;
-        Vec2 baseW = b.localToWorld({-b.width * 0.5f + t * b.width, 0.0f});
-        Vec2 tipW  = b.localToWorld({-b.width * 0.5f + t * b.width - 0.14f, 0.14f});
-        DrawLineEx(worldToScreen(baseW, sw, sh), worldToScreen(tipW, sw, sh),
-                   1.5f, highlighted ? COL_GOLD : COL_GOLD_DIM);
+    Vec2 localCorners[4] = {
+        { innerX,  innerY},
+        {-innerX,  innerY},
+        {-innerX, -innerY},
+        { innerX, -innerY}
+    };
+
+    // Вспомогательная лямбда для заливки повернутого скругленного прямоугольника
+    auto drawRoundedShape = [&](Vector2 offsetPx, Color col) {
+        Vector2 cScr = worldToScreen(b.pos, sw, sh);
+        cScr.x += offsetPx.x;
+        cScr.y += offsetPx.y;
+
+        if (innerX > 1e-4f) {
+            DrawRectanglePro({cScr.x, cScr.y, innerX * 2.0f * ppm, bh}, {innerX * ppm, bh * 0.5f}, deg, col);
+        }
+        if (innerY > 1e-4f) {
+            DrawRectanglePro({cScr.x, cScr.y, bw, innerY * 2.0f * ppm}, {bw * 0.5f, innerY * ppm}, deg, col);
+        }
+        for (int i = 0; i < 4; ++i) {
+            Vector2 p = worldToScreen(b.localToWorld(localCorners[i]), sw, sh);
+            DrawCircleV({p.x + offsetPx.x, p.y + offsetPx.y}, rScr, col);
+        }
+    };
+
+    // 1. Мягкая тень и матовая база в точном стиле нижнего дока
+    drawRoundedShape({2.0f, 4.0f}, {14, 12, 12, 255});
+    Color fillCol = unlocked ? Color{52, 28, 34, 255} : Color{34, 29, 28, 255};
+    drawRoundedShape({0.0f, 0.0f}, fillCol);
+
+    // 2. Аккуратная диагональная штриховка внутри скругленной капсулы
+    auto getMaxYAtX = [&](float x) {
+        float ax = std::abs(x);
+        if (ax > hx) return 0.0f;
+        if (ax <= innerX) return hy;
+        float dx = ax - innerX;
+        return innerY + std::sqrt(std::max(0.0f, r * r - dx * dx));
+    };
+
+    Color hatchCol = highlighted ? COL_GOLD : Fade(COL_GOLD_DIM, 0.72f);
+    float step = 0.22f;
+    float slant = hy * 0.65f;
+    for (float x = -hx + 0.08f; x <= hx - 0.08f; x += step) {
+        float x1 = x - slant;
+        float x2 = x + slant;
+        if (x1 < -hx + 0.03f || x2 > hx - 0.03f) continue;
+
+        float yLim1 = std::max(0.0f, getMaxYAtX(x1) - 0.025f);
+        float yLim2 = std::max(0.0f, getMaxYAtX(x2) - 0.025f);
+        if (yLim1 <= 0.01f || yLim2 <= 0.01f) continue;
+
+        Vec2 pBot = b.localToWorld({x1, -yLim1});
+        Vec2 pTop = b.localToWorld({x2,  yLim2});
+        DrawLineEx(worldToScreen(pBot, sw, sh), worldToScreen(pTop, sw, sh), 1.4f, hatchCol);
+    }
+
+    // 3. Гладкая скругленная обводка по периметру
+    const int ARC_PTS = 8;
+    std::vector<Vector2> perim;
+    perim.reserve(ARC_PTS * 4);
+    float startAngles[4] = {0.0f, 1.5707963f, 3.1415926f, 4.712389f};
+
+    for (int c = 0; c < 4; ++c) {
+        for (int s = 0; s < ARC_PTS; ++s) {
+            float a = startAngles[c] + (float)s / (float)(ARC_PTS - 1) * 1.5707963f;
+            Vec2 lp = {
+                localCorners[c].x + std::cos(a) * r,
+                localCorners[c].y + std::sin(a) * r
+            };
+            perim.push_back(worldToScreen(b.localToWorld(lp), sw, sh));
+        }
+    }
+
+    Color borderCol = highlighted ? COL_GOLD : (unlocked ? COL_WINE_BRIGHT : COL_TEXT_CREAM);
+    float thick = highlighted ? 2.4f : 1.8f;
+    for (size_t i = 0; i < perim.size(); ++i) {
+        Vector2 p1 = perim[i];
+        Vector2 p2 = perim[(i + 1) % perim.size()];
+        DrawLineEx(p1, p2, thick, borderCol);
     }
 }
 
@@ -585,6 +718,9 @@ void Renderer::drawRopeTooltip(const RopeLink& r, Vector2 midScreen) const {
 }
 
 void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
+    camPos = state.camPos;
+    ppm = basePpm * state.camZoom;
+
     BeginDrawing();
     ClearBackground(COL_BG_DARK);
 
@@ -592,9 +728,10 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
     int sh = GetScreenHeight();
     int canvasW = sw - InputHandler::INSPECTOR_WIDTH;
 
-    // Пол
-    float groundScrY = sh * 0.84f - world.groundY * ppm;
-    DrawLine(0, (int)groundScrY, canvasW, (int)groundScrY, COL_GOLD_DIM);
+    BeginScissorMode(0, 0, canvasW, sh);
+
+    // 0. Бесконечная координатная сетка (ровные клетки от пола)
+    drawInfiniteGridAndFloor(world, sw, sh);
 
     // 1. Отрисовка тросов и витых пружин
     for (const auto& r : world.ropes) {
@@ -607,7 +744,7 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
 
         if (r.isSpring && !r.isRigid) {
             if (!isHighlighted && r.signedExtension() < -0.02f) {
-                ropeCol = {222, 146, 96, 255}; // Теплый оттенок при сжатии пружины
+                ropeCol = {222, 146, 96, 255};
             }
             drawSpringCoil(sA, sB, ropeCol, isHighlighted ? 3.0f : 2.2f);
         } else {
@@ -695,7 +832,6 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
                            state.activeTool == ToolType::ADD_SPRING);
 
     if (state.creatingSupportBodyId >= 0 && state.creatingSupportBodyId < (int)world.bodies.size()) {
-        // Живая индикация длины и наклона при растягивании опоры
         const Body& sb = world.bodies[state.creatingSupportBodyId];
         Vector2 p1 = worldToScreen(sb.localToWorld({-sb.width * 0.5f, 0.0f}), sw, sh);
         Vector2 p2 = worldToScreen(sb.localToWorld({ sb.width * 0.5f, 0.0f}), sw, sh);
@@ -720,7 +856,10 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
             DrawRing(m, rad - 1.5f, rad, 0.0f, 360.0f, 36, Fade(COL_GOLD, 0.7f));
         } else if (state.activeTool == ToolType::ADD_SUPPORT) {
             float w = 3.0f * ppm;
-            DrawLineEx({m.x - w * 0.5f, m.y}, {m.x + w * 0.5f, m.y}, 2.5f, Fade(COL_GOLD, 0.75f));
+            float h = 0.24f * ppm;
+            Rectangle sup = {m.x - w * 0.5f, m.y - h * 0.5f, w, h};
+            DrawRectangleRounded(sup, 0.85f, 8, Fade(COL_PANEL_BG, 0.65f));
+            DrawRectangleRoundedLinesEx(sup, 0.85f, 8, 1.5f, Fade(COL_GOLD, 0.75f));
         }
 
         int iconIdx = 0;
@@ -738,17 +877,40 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
         DrawTextEx(fontSmall, label, {tag.x + 26.0f, tag.y + (tag.height - ts.y) * 0.5f}, 14, 1.0f, COL_TEXT_CREAM);
     }
 
-    // 3. Векторы сил (mg, N, P, внешняя тяга F и трение Fтр)
+    // 3. Векторы сил (внешняя сила тяги F показывается всегда по умолчанию, даже без наведения)
     const float FORCE_SCALE = 0.9f;
     if (state.forceViewMode != 2) {
         for (const auto& b : world.bodies) {
             if (b.isStatic) continue;
-            bool isHighlighted = (b.id == state.hoveredBodyId) || (b.id == state.draggedBodyId);
-            if (state.forceViewMode == 0 && !isHighlighted) continue;
 
             Vector2 scr = worldToScreen(b.pos, sw, sh);
             float bw = (b.shape == ShapeType::CIRCLE ? (b.radius * 2.0f) : b.width) * ppm;
             float bh = (b.shape == ShapeType::CIRCLE ? (b.radius * 2.0f) : b.height) * ppm;
+
+            bool hasAppliedForce = (std::abs(b.appliedForceX) > 0.1f);
+            bool isHighlighted = (b.id == state.hoveredBodyId) || (b.id == state.draggedBodyId);
+
+            // Внешняя сила тяги F и ответная сила трения Fтр видны сразу без наведения
+            if (hasAppliedForce) {
+                float sign = (b.appliedForceX > 0.0f) ? 1.0f : -1.0f;
+                Vector2 sidePt = {scr.x + sign * bw * 0.5f, scr.y};
+                Vector2 endPt  = {sidePt.x + b.appliedForceX * FORCE_SCALE, sidePt.y};
+                drawVectorArrow(sidePt, endPt, {96, 178, 224, 255},
+                                TextFormat("F = %.1f Н", std::abs(b.appliedForceX)),
+                                {sign > 0 ? 8.0f : -80.0f, -18.0f});
+            }
+
+            if ((state.forceViewMode == 1 || isHighlighted || hasAppliedForce) && b.frictionForce > 0.2f) {
+                float dirX = (std::abs(b.vel.x) > 0.05f) ? ((b.vel.x > 0.0f) ? -1.0f : 1.0f)
+                           : (hasAppliedForce ? ((b.appliedForceX > 0.0f) ? -1.0f : 1.0f) : -1.0f);
+                Vector2 frStart = {scr.x, scr.y + bh * 0.5f - 2.0f};
+                Vector2 frEnd   = {frStart.x + dirX * b.frictionForce * FORCE_SCALE, frStart.y};
+                drawVectorArrow(frStart, frEnd, {188, 122, 214, 255},
+                                TextFormat("Fтр = %.1f Н", b.frictionForce),
+                                {dirX > 0 ? 8.0f : -90.0f, 6.0f});
+            }
+
+            if (state.forceViewMode == 0 && !isHighlighted) continue;
 
             float fg = b.mass * world.G;
             drawVectorArrow(scr, {scr.x, scr.y + fg * FORCE_SCALE}, {214, 92, 92, 255},
@@ -764,27 +926,6 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
                 Vector2 topPt = {scr.x + 6.0f, scr.y - bh * 0.5f};
                 drawVectorArrow(topPt, {topPt.x, topPt.y + b.topLoadForce * FORCE_SCALE},
                                 {218, 144, 88, 255}, TextFormat("P = %.1f Н", b.topLoadForce), {10.0f, -8.0f});
-            }
-
-            // Вектор внешней силы тяги F
-            if (std::abs(b.appliedForceX) > 0.1f) {
-                float sign = (b.appliedForceX > 0.0f) ? 1.0f : -1.0f;
-                Vector2 sidePt = {scr.x + sign * bw * 0.5f, scr.y};
-                Vector2 endPt  = {sidePt.x + b.appliedForceX * FORCE_SCALE, sidePt.y};
-                drawVectorArrow(sidePt, endPt, {96, 178, 224, 255},
-                                TextFormat("F = %.1f Н", std::abs(b.appliedForceX)),
-                                {sign > 0 ? 8.0f : -80.0f, -18.0f});
-            }
-
-            // Вектор силы трения Fтр вдоль нижней грани
-            if (b.frictionForce > 0.2f) {
-                float dirX = (std::abs(b.vel.x) > 0.05f) ? ((b.vel.x > 0.0f) ? -1.0f : 1.0f)
-                           : ((std::abs(b.appliedForceX) > 0.1f) ? ((b.appliedForceX > 0.0f) ? -1.0f : 1.0f) : -1.0f);
-                Vector2 frStart = {scr.x, scr.y + bh * 0.5f - 2.0f};
-                Vector2 frEnd   = {frStart.x + dirX * b.frictionForce * FORCE_SCALE, frStart.y};
-                drawVectorArrow(frStart, frEnd, {188, 122, 214, 255},
-                                TextFormat("Fтр = %.1f Н", b.frictionForce),
-                                {dirX > 0 ? 8.0f : -90.0f, 6.0f});
             }
         }
     }
@@ -823,9 +964,11 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
 
     DrawTextEx(fontMain, state.paused ? "[Пробел] - пауза" : "[Пробел] - симуляция", {20, hudY}, 15, 1.0f, COL_TEXT_MUTED);
     DrawTextEx(fontMain, forceModeStr, {20, hudY + 22}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, "[R] - сброс сцены", {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, "[R] - сброс сцены  |  [ПКМ / Колесо] - камера", {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
 
-    // 6. Нижний док и правый инспектор
+    EndScissorMode();
+
+    // 6. Нижний док и правый инспектор поверх холста
     drawLiquidDock(sh, state);
     drawInspector(world, state, sw, sh);
 

@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <algorithm>
 
+static const float BASE_PPM = 70.0f;
+
 static bool PointInRect(Vector2 p, Rectangle r) {
     return (p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height);
 }
@@ -89,17 +91,16 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
                 break;
             case EditField::SUPPORT_X:
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
-                    world.bodies[state.selectedBodyId].pos.x = std::clamp(val, -25.0f, 25.0f);
+                    world.bodies[state.selectedBodyId].pos.x = std::clamp(val, -500.0f, 500.0f);
                 }
                 break;
             case EditField::SUPPORT_Y:
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
-                    world.bodies[state.selectedBodyId].pos.y = std::clamp(val, 0.2f, 20.0f);
+                    world.bodies[state.selectedBodyId].pos.y = std::clamp(val, 0.1f, 500.0f);
                 }
                 break;
             case EditField::SUPPORT_WIDTH:
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
-                    // Увеличенный лимит длины опоры до 30 м
                     world.bodies[state.selectedBodyId].width = std::clamp(val, 0.5f, 30.0f);
                 }
                 break;
@@ -111,7 +112,7 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
                 break;
             case EditField::ROPE_LENGTH:
                 if (state.selectedRopeId >= 0 && state.selectedRopeId < (int)world.ropes.size()) {
-                    world.ropes[state.selectedRopeId].restLength = std::clamp(val, 0.3f, 8.0f);
+                    world.ropes[state.selectedRopeId].restLength = std::clamp(val, 0.3f, 15.0f);
                     if (state.paused) world.syncRopeLengthToAttachedBody(state.selectedRopeId);
                 }
                 break;
@@ -127,7 +128,7 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
                 world.substeps = std::clamp((int)std::round(val), 4, 100);
                 break;
             case EditField::NEW_ROPE_LENGTH:
-                state.newRopeDefaultLength = std::clamp(val, 0.3f, 7.0f);
+                state.newRopeDefaultLength = std::clamp(val, 0.3f, 12.0f);
                 break;
             default:
                 break;
@@ -364,6 +365,7 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         return;
     }
 
+    // Не выбран ни один объект: Параметры среды + Лабораторные стенды
     if (CheckInputBoxClick(m, x, topY + 44)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
 
     if (PointInRect(m, {x, topY + 98, 128, 26}))       { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
@@ -372,13 +374,38 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
     if (CheckInputBoxClick(m, x, topY + 134)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
     if (CheckInputBoxClick(m, x, topY + 188)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
 
-    if (PointInRect(m, {x, topY + 250, w, 30})) {
+    if (PointInRect(m, {x, topY + 244, w, 28})) {
+        commitEditField(world, state);
+        state.camPos = {-0.8f, 4.3f};
+        state.camZoom = 1.0f;
+        return;
+    }
+
+    // Блок готовых Лабораторных стендов
+    float labY = topY + 314.0f;
+    for (int i = 0; i < 4; ++i) {
+        if (PointInRect(m, {x, labY + i * 34.0f, w, 29.0f})) {
+            commitEditField(world, state);
+            world.loadLabPreset(i + 1);
+            state.paused = true;
+            state.selectedBodyId = -1;
+            state.selectedRopeId = -1;
+            state.camPos = {0.0f, 4.3f};
+            state.camZoom = 1.0f;
+            if (i == 3) state.forceViewMode = 1; // В Лаб. 4 сразу включаем показ всех сил
+            return;
+        }
+    }
+
+    if (PointInRect(m, {x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
         commitEditField(world, state);
         world.setupDefaultScene();
         state.paused = true;
+        state.camPos = {-0.8f, 4.3f};
+        state.camZoom = 1.0f;
         return;
     }
-    if (PointInRect(m, {x, topY + 288, w, 30})) {
+    if (PointInRect(m, {x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
         commitEditField(world, state);
         world.clearScene();
         state.paused = true;
@@ -438,7 +465,6 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
         }
     }
 
-    // Шорткаты: [1] Курсор, [2] -> [1..5] Добавить, [3] Удалить
     if (state.addMenuOpen) {
         if (IsKeyPressed(KEY_ONE)) {
             state.activeTool = ToolType::ADD_BLOCK;
@@ -476,18 +502,17 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
             state.ropeStartBodyId = -1;
             state.creatingSupportBodyId = -1;
             state.activeTool = ToolType::SELECT_MOVE;
+            state.selectedBodyId = -1;
+            state.selectedRopeId = -1;
         }
     }
 }
 
-void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm) {
+void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float /*ppm*/) {
     float canvasWidth = (float)(screenW - INSPECTOR_WIDTH);
-    float originX = canvasWidth * 0.5f;
-    float originY = screenH * 0.84f;
-
-    world.leftWallX  = -originX / ppm + 0.08f;
-    world.rightWallX = (canvasWidth - originX) / ppm - 0.08f;
-    world.ceilingY   = originY / ppm - 0.08f;
+    float centerX = canvasWidth * 0.5f;
+    float centerY = screenH * 0.5f;
+    float effPpm = BASE_PPM * state.camZoom;
 
     bool overDock = handleDock(world, state, screenH);
     handleInspector(world, state, screenW, screenH);
@@ -496,9 +521,24 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
     Vector2 mouse = GetMousePosition();
     bool insideCanvas = (!overDock && mouse.x >= 0 && mouse.x < canvasWidth && mouse.y >= 0 && mouse.y <= screenH);
 
+    if (insideCanvas && (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) || IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE))) {
+        state.isPanning = true;
+        state.panStartMouse = mouse;
+        state.panStartCam = state.camPos;
+    }
+    if (state.isPanning) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT) || IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
+            float dx = (mouse.x - state.panStartMouse.x) / effPpm;
+            float dy = (mouse.y - state.panStartMouse.y) / effPpm;
+            state.camPos = {state.panStartCam.x - dx, state.panStartCam.y + dy};
+        } else {
+            state.isPanning = false;
+        }
+    }
+
     state.mouseWorldPos = {
-        (mouse.x - originX) / ppm,
-        (originY - mouse.y) / ppm
+        state.camPos.x + (mouse.x - centerX) / effPpm,
+        state.camPos.y + (centerY - mouse.y) / effPpm
     };
 
     state.hoveredBodyId = -1;
@@ -524,21 +564,33 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
             }
         }
 
-        // Быстрый поворот любого тела колёсиком мыши (5° за щелчок или 1° с Shift)
         float wheel = GetMouseWheelMove();
         if (std::abs(wheel) > 1e-3f && state.creatingSupportBodyId == -1) {
+            bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
             int rotId = (state.draggedBodyId != -1) ? state.draggedBodyId
                       : ((state.hoveredBodyId != -1) ? state.hoveredBodyId : state.selectedBodyId);
-            if (rotId >= 0 && rotId < (int)world.bodies.size()) {
+
+            if (shiftHeld && rotId >= 0 && rotId < (int)world.bodies.size()) {
                 Body& rb = world.bodies[rotId];
-                float stepDeg = (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) ? 1.0f : 5.0f;
-                rb.angle += wheel * stepDeg * 0.0174532925f;
+                rb.angle += wheel * 5.0f * 0.0174532925f;
                 if (rb.isStatic) {
                     rb.angle = std::clamp(rb.angle, -75.0f * 0.0174532925f, 75.0f * 0.0174532925f);
                 }
                 rb.angVel = 0.0f;
                 world.resolveEditorOverlap(rb.id);
                 if (state.paused) world.saveSnapshot();
+            } else {
+                Vec2 worldBefore = state.mouseWorldPos;
+                float zoomFactor = (wheel > 0.0f) ? 1.12f : (1.0f / 1.12f);
+                state.camZoom = std::clamp(state.camZoom * zoomFactor, 0.20f, 3.50f);
+
+                float newEffPpm = BASE_PPM * state.camZoom;
+                Vec2 worldAfter = {
+                    state.camPos.x + (mouse.x - centerX) / newEffPpm,
+                    state.camPos.y + (centerY - mouse.y) / newEffPpm
+                };
+                state.camPos += (worldBefore - worldAfter);
+                state.mouseWorldPos = worldBefore;
             }
         }
 
@@ -595,9 +647,8 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                     break;
                 }
                 case ToolType::ADD_SUPPORT: {
-                    // Зафиксировали начальную точку клика — пока ЛКМ зажата, опору можно растягивать
                     state.supportStartPos = state.mouseWorldPos;
-                    int id = world.createBody(state.mouseWorldPos, 0.5f, 0.2f, 1.0f, true);
+                    int id = world.createBody(state.mouseWorldPos, 0.5f, 0.24f, 1.0f, true);
                     state.creatingSupportBodyId = id;
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
@@ -620,7 +671,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                             Vec2 pB = bodyB.localToWorld(snapB);
                             float dist = (pB - pA).length();
 
-                            float ropeLen = std::clamp(dist, 0.4f, 7.0f);
+                            float ropeLen = std::clamp(dist, 0.4f, 12.0f);
                             if (!isSpring && !bodyB.isStatic && bodyB.pos.y - bodyB.height * 0.5f <= world.groundY + 0.1f && dist > state.newRopeDefaultLength) {
                                 ropeLen = state.newRopeDefaultLength;
                             }
@@ -635,7 +686,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                             world.saveSnapshot();
                         } else {
                             float dragDist = (state.mouseWorldPos - pA).length();
-                            float len = (dragDist > 0.4f) ? std::clamp(dragDist, 0.4f, 7.0f) : state.newRopeDefaultLength;
+                            float len = (dragDist > 0.4f) ? std::clamp(dragDist, 0.4f, 12.0f) : state.newRopeDefaultLength;
                             int rId = world.addFreeRope(state.ropeStartBodyId, state.ropeStartOffset, state.mouseWorldPos, len, 180.0f, false, isSpring);
                             state.selectedRopeId = rId;
                             state.selectedBodyId = -1;
@@ -662,7 +713,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
         }
     }
 
-    // Растягивание опоры в реальном времени, пока зажата ЛКМ
     if (state.creatingSupportBodyId >= 0 && state.creatingSupportBodyId < (int)world.bodies.size()) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Body& sb = world.bodies[state.creatingSupportBodyId];
@@ -672,7 +722,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
             float dist = delta.length();
 
             if (dist >= 0.15f) {
-                // Авто-примагничивание к 0°, если тянем почти горизонтально (без Shift)
                 if (std::abs(delta.y) < 0.14f && !IsKeyDown(KEY_LEFT_SHIFT) && !IsKeyDown(KEY_RIGHT_SHIFT)) {
                     end.y = start.y;
                     delta = end - start;
@@ -710,7 +759,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
             RopeLink& r = world.ropes[state.draggedFreeRopeId];
             Vec2 pA = world.bodies[r.idA].localToWorld(r.offsetA);
             Vec2 d = state.mouseWorldPos - pA;
-            r.restLength = std::clamp(d.length(), 0.3f, 7.0f);
+            r.restLength = std::clamp(d.length(), 0.3f, 12.0f);
             r.currentLength = r.restLength;
             Vec2 n = (d.length() > 1e-4f) ? d.normalized() : Vec2{0.0f, -1.0f};
             r.freePos = pA + n * r.restLength;
@@ -721,7 +770,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
         if (state.creatingSupportBodyId >= 0 && state.creatingSupportBodyId < (int)world.bodies.size()) {
             Body& sb = world.bodies[state.creatingSupportBodyId];
-            // Если это был просто быстрый клик без протяжки — ставим классическую опору 3.0 м
             if ((state.mouseWorldPos - state.supportStartPos).length() < 0.15f) {
                 sb.width = 3.0f;
                 sb.angle = 0.0f;
