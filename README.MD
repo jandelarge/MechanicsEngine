@@ -3,22 +3,8 @@
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white)
 ![Raylib 5.0](https://img.shields.io/badge/Raylib-5.0-E05D44?style=for-the-badge&logo=raylib&logoColor=white)
 ![CMake](https://img.shields.io/badge/CMake-3.20%2B-064F8C?style=for-the-badge&logo=cmake&logoColor=white)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-221E1D?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-C2A878?style=for-the-badge)
 
 **MechanicsEngine** — собственный 2D-движок физического моделирования твёрдого тела и интерактивная цифровая лаборатория на чистом **C++17** и **Raylib 5.0**. Проект разработан с нуля без использования сторонних физических библиотек (таких как Box2D) и предназначен для наглядного моделирования, измерения и верификации законов классической механики.
-
----
-
-## Скриншоты и демонстрация
-
-
-
-| Интерактивная среда и векторы сил | Лабораторные стенды|
-| :---: | :---: |
-| ![Главное окно лаборатории]() | ![Лабораторные испытания](docs/screenshots/lab_presets.png) |
-
----
 
 ## Возможности и функционал
 
