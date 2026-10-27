@@ -1,51 +1,102 @@
-# Mechanics Engine
+# MechanicsEngine
 
-![C++](https://img.shields.io/badge/C++-17-blue.svg?style=flat&logo=c%2B%2B)
-![Raylib](https://img.shields.io/badge/Raylib-5.5-red.svg?style=flat)
-![CMake](https://img.shields.io/badge/CMake-Build-success.svg?style=flat&logo=cmake)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white)
+![Raylib 5.0](https://img.shields.io/badge/Raylib-5.0-E05D44?style=for-the-badge&logo=raylib&logoColor=white)
+![CMake](https://img.shields.io/badge/CMake-3.20%2B-064F8C?style=for-the-badge&logo=cmake&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-221E1D?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-C2A878?style=for-the-badge)
 
-**An educational physics sandbox for modeling mechanical processes.** Designed to help students understand mechanics by providing an interactive, real-time visualization of objects and forces (gravity, tension, normal reaction, and friction).
-
-The simulator allows you to seamlessly build physical setups using blocks, supports, and ropes, and directly observe how forces interact dynamically.
-
->
+**MechanicsEngine** — собственный 2D-движок физического моделирования твёрдого тела и интерактивная цифровая лаборатория на чистом **C++17** и **Raylib 5.0**. Проект разработан с нуля без использования сторонних физических библиотек (таких как Box2D) и предназначен для наглядного моделирования, измерения и верификации законов классической механики.
 
 ---
 
-## Key Features
+## Скриншоты и демонстрация
 
-* **Interactive Sandbox:** Spawn static supports, dynamic blocks, and ropes on the fly.
-* **Direct Parameter Control:** A built-in UI inspector to edit mass, friction coefficient, dimensions, rope length, and stiffness via direct keyboard input.
-* **Vector Telemetry:** Real-time visualization of physical forces (mg, N, P, T, F_frict) directly on the objects.
-* **Custom Physics Engine:** Built entirely from scratch. No third-party physics libraries (like Box2D) are used.
 
-## Physics Under the Hood
 
-The engine is built on modern computational mechanics methods:
-* **Sequential Impulses:** Accurate weight transfer in block stacks and true Coulomb dry friction calculation.
-* **OBB (Oriented Bounding Box) + SAT:** Precise collision detection for rotated objects, including lever arm and moment of inertia calculations (blocks can realistically tip over edges).
-* **XPBD (Extended Position Based Dynamics):** Elastic and absolutely rigid ropes that obey Hooke's law and accurately account for centripetal acceleration.
-* **Elastic Mouse Grab:** Objects are moved via a virtual spring rather than teleportation, preserving the laws of conservation of energy and momentum.
+| Интерактивная среда и векторы сил | Лабораторные стенды|
+| :---: | :---: |
+| ![Главное окно лаборатории](docs/screenshots/main_workspace.png) | ![Лабораторные испытания](docs/screenshots/lab_presets.png) |
 
-## Controls
+---
 
-The interface features a Liquid Glass style UI dock with vector icons.
-* `[Space]` — Start / Pause simulation.
-* `[V]` — Toggle force vector display mode (All / On Hover / Hidden).
-* `[R]` — Reset the scene.
-* `[LMB] on empty space` — Use the selected tool (Cursor, Block, Support, Rope, Delete).
-* `[LMB] on object` — Select an object to reveal and edit its properties in the right-side Inspector.
+## Возможности и функционал
 
-## Build & Run
+### 1. Собственное физическое ядро
+* **Точная детекция столкновений:** обработка коллизий между произвольно ориентированными прямоугольниками (OBB) и сферами на базе теоремы о разделяющей оси (**SAT**) и алгоритма отсечения граней **Сазерленда — Ходжмана**.
+* **Матричный решатель контактов (2×2 Block Solver):** синхронное разрешение парных точек опоры через систему линейных уравнений, полностью устраняющее эффект «Пизанской башни», паразитные покачивания и взаимное проникновение объектов в высоких конструкциях.
+* **Динамика вращения и трение Кулона:** расчёт моментов инерции для различных геометрических форм, учёт коэффициентов упругого восстановления, трения покоя, скольжения и качения.
+* **Упругие и жёсткие связи:** поддержка четырёх типов соединений — классических нитей (работающих только на растяжение), нерастяжимых тросов, **двусторонних пружин Гука** (работающих как на растяжение, так и на сжатие с жёстким упором минимальной длины) и неделимых стержней.
 
-The project is written in **C++17** using **Raylib** for rendering and **CMake** for the build system. External dependencies are fetched automatically.
+### 2. Готовые лабораторные стенды и управление сценами
+* **Встроенные демонстрационные эксперименты:** мгновенная подгрузка преднастроенных стендов из интерфейса программы:
+   * *Наклонная плоскость (Шар против Бруска):* сравнение ускорения катящегося и скользящего тел равной массы.
+   * *Гармонические колебания:* исследование закона Гука на пружинных маятниках разной жёсткости и математическом маятнике.
+   * *Закон сохранения импульса:* моделирование упругих соударений в системе шаров на гладкой дорожке.
+   * *Статика и предел трения покоя:* демонстрация порога страгивания нагруженных и свободных тел под действием постоянной горизонтальной тяги.
+* **Система снимков и файлов сцен:** автоматическое сохранение исходного состояния перед запуском расчёта для мгновенного сброса эксперимента, а также сохранение и загрузка пользовательских лабораторных конфигураций.
 
-### Requirements
-* A C++17 compatible compiler (GCC/MinGW, MSVC, Clang).
-* CMake 3.15 or higher.
+### 3. Контроль времени и пошаговый анализ
+* **Лабораторный секундомер:** точный отсчёт времени активной симуляции для замера периодов колебаний и времени прохождения дистанции.
+* **Масштабирование времени:** переключение скорости симуляции между реальным временем (`1.0x`) и режимами замедленной съёмки (`0.5x`, `0.25x`).
+* **Пошаговый режим:** возможность продвигать физический мир ровно на один фиксированный расчётный шаг во время паузы для детального разбора момента удара или срыва тела.
 
-### Build Steps (Terminal / CLion)
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/YOUR_USERNAME/MechanicsEngine.git](https://github.com/YOUR_USERNAME/MechanicsEngine.git)
-   cd MechanicsEngine
+### 4. Графики в реальном времени и экспорт данных
+* **Встроенный мини-осциллограф:** построение живых графиков изменения кинетической, потенциальной и полной механической энергии тела, а также графиков скорости и силы реакции опоры в зависимости от времени.
+* **Экспорт телеметрии в CSV:** выгрузка протокола измерений (`Время`, `X`, `Y`, `Скорость`, `Угловая скорость`, `Реакция опоры N`, `Сила трения`, `Энергия`) в табличный файл `.csv` для построения отчётов и анализа в Excel или Python.
+
+### 5. Интерактивный редактор, бесконечное полотно и телеметрия
+* **Независимая 2D-камера:** бесконечное рабочее пространство с адаптивной метровой сеткой, свободным панорамированием и плавным масштабированием в точку курсора.
+* **Интуитивное конструирование:** быстрое создание брусков, шаров, связей и наклонных опор с интерактивной протяжкой длины и угла наклона в реальном времени.
+* **Прямые манипуляции:** перетаскивание объектов с физическим захватом, быстрое изменение угла наклона тел и опор, автоматическое примагничивание связей к узловым точкам геометрии.
+* **Векторная индикация и инспектор свойств:** отображение в реальном времени масштабируемых векторов силы тяжести (`mg`), нормальной реакции опоры (`N`), давления сверху (`P`), силы натяжения и упругости (`T`, `Fупр`), внешней горизонтальной тяги (`F`) и силы трения (`Fтр`), а также тонкая настройка всех физических параметров тела и среды (`g = 9.81` / `10.0 м/с²`, частота подшагов солвера).
+
+---
+
+## Архитектура проекта
+
+```text
+MechanicsEngine/
+├── CMakeLists.txt              # Конфигурация сборки
+└── src/
+    ├── main.cpp                # Точка входа и главный цикл симуляции
+    ├── core/
+    │   └── MathVec.hpp         # Векторная 2D-алгебра, матрицы поворота и проекции
+    ├── physics/
+    │   ├── Body.hpp            # Твёрдое тело, геометрия OBB/сфер и моменты инерции
+    │   ├── Rope.hpp            # Упругие нити, двусторонние пружины Гука и стержни
+    │   ├── PhysicsWorld.hpp    # Контейнер физического мира и структур контактов
+    │   └── PhysicsWorld.cpp    # Коллизии, решатель импульсов 2x2 и пресеты стендов
+    └── ui/
+        ├── InputHandler.hpp    # Состояние приложения, камеры и инструментов
+        ├── InputHandler.cpp    # Обработка мыши, камеры и инспектора свойств
+        ├── Renderer.hpp        # Интерфейс графического рендерера
+        └── Renderer.cpp        # Отрисовка мира, процедурных пружин, векторов и UI
+```
+
+---
+
+## Сборка и запуск
+
+### Требования
+* Компилятор с поддержкой **C++17** (MinGW-w64 GCC, Clang или MSVC)
+* **CMake 3.20+** и система сборки **Ninja** (или Make)
+* **Git** (графическая библиотека **Raylib 5.0** скачивается и собирается автоматически через `FetchContent`)
+
+### Инструкция по установке
+
+1. Клонируйте репозиторий и перейдите в папку проекта:
+```bash
+git clone [https://github.com/jandelarge/MechanicsEngine.git](https://github.com/jandelarge/MechanicsEngine.git)
+cd MechanicsEngine
+```
+
+2. Сконфигурируйте и соберите проект через CMake:
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+3. Запустите полученный исполняемый файл (`build/MechanicsEngine.exe` на Windows или `./build/MechanicsEngine` на Linux).
+
+> **Автономная сборка под Windows (MinGW):** в `CMakeLists.txt` уже настроена полная статическая линковка системных библиотек (`-static -static-libgcc -static-libstdc++`) и оконный режим (`WIN32` / `-mwindows`). Собранный `.exe` файл запускается на любом ПК без установки сторонних `.dll`.
