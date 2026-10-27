@@ -232,6 +232,18 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
             case EditField::NEW_ROPE_LENGTH:
                 state.newRopeDefaultLength = std::clamp(val, 0.3f, 12.0f);
                 break;
+            case EditField::BODY_TRAIL_LIFETIME:
+                if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
+                    Body& b = world.bodies[state.selectedBodyId];
+                    b.trailLifetime = std::clamp(val, 0.2f, 300.0f);
+                }
+                break;
+            case EditField::WORLD_TRAIL_LIFETIME:
+                world.defaultTrailLifetime = std::clamp(val, 0.2f, 300.0f);
+                for (auto& b : world.bodies) {
+                    b.trailLifetime = world.defaultTrailLifetime;
+                }
+                break;
             default:
                 break;
         }
@@ -334,24 +346,19 @@ bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int s
         commitEditField(world, state);
         state.graphPos = {gr.x, gr.y};
 
-        // 1. Зона ресайза в правом нижнем углу (20x20 px)
         if (PointInRect(m, {gr.x + gr.width - 20.0f, gr.y + gr.height - 20.0f, 20.0f, 20.0f})) {
             state.isResizingGraph = true;
             return true;
         }
-
-        // 2. Вкладка 1: Энергия
-        if (PointInRect(m, {gr.x + gr.width - 226.0f, gr.y + 7.0f, 82.0f, 22.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 266.0f, gr.y + 6.0f, 90.0f, 24.0f})) {
             state.graphTab = 0;
             return true;
         }
-        // 3. Вкладка 2: Скорость / Силы
-        if (PointInRect(m, {gr.x + gr.width - 140.0f, gr.y + 7.0f, 108.0f, 22.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 170.0f, gr.y + 6.0f, 136.0f, 24.0f})) {
             state.graphTab = 1;
             return true;
         }
-        // 4. Кнопка закрытия [X]
-        if (PointInRect(m, {gr.x + gr.width - 26.0f, gr.y + 7.0f, 20.0f, 22.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 28.0f, gr.y + 6.0f, 22.0f, 24.0f})) {
             state.showGraph = false;
             state.isDraggingGraph = false;
             state.isResizingGraph = false;
@@ -475,7 +482,6 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 b.angle = 0.0f;
                 return;
             }
-
             if (PointInRect(m, {x, (float)screenH - 48.0f, w, 32})) {
                 commitEditField(world, state);
                 int delId = state.selectedBodyId;
@@ -487,68 +493,62 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
             }
             commitEditField(world, state);
             return;
-        } else if (b.shape == ShapeType::CIRCLE) {
-            if (CheckInputBoxClick(m, x, topY + 44))  { ActivateInputField(world, state, EditField::BODY_MASS); return; }
-            if (CheckInputBoxClick(m, x, topY + 98))  { ActivateInputField(world, state, EditField::BODY_FRICTION); return; }
-            if (CheckInputBoxClick(m, x, topY + 152)) { ActivateInputField(world, state, EditField::BODY_RADIUS); return; }
-            if (CheckInputBoxClick(m, x, topY + 206)) { ActivateInputField(world, state, EditField::BODY_RESTITUTION); return; }
-            if (CheckInputBoxClick(m, x, topY + 260)) { ActivateInputField(world, state, EditField::BODY_FORCE_X); return; }
-
-            if (PointInRect(m, {x, topY + 314, 130, 26})) {
-                commitEditField(world, state);
-                b.canRotate = !b.canRotate;
-                if (!b.canRotate) { b.angle = 0.0f; b.angVel = 0.0f; }
-                b.updateMassData();
-                return;
-            }
-            if (PointInRect(m, {x + 138, topY + 314, 130, 26})) {
-                commitEditField(world, state);
-                b.angle = 0.0f;
-                b.angVel = 0.0f;
-                return;
-            }
-            // Индивидуальное скрытие тела (с сохранением его трассера)
-            if (PointInRect(m, {x, topY + 346, w, 26})) {
-                commitEditField(world, state);
-                b.hidden = !b.hidden;
-                return;
-            }
-
-            if (PointInRect(m, {x, (float)screenH - 48.0f, w, 32})) {
-                commitEditField(world, state);
-                int delId = state.selectedBodyId;
-                state.selectedBodyId = -1;
-                world.removeBody(delId);
-                clearTelemetry(world, state);
-                return;
-            }
-            commitEditField(world, state);
-            return;
         } else {
-            if (CheckInputBoxClick(m, x, topY + 44))  { ActivateInputField(world, state, EditField::BODY_MASS); return; }
-            if (CheckInputBoxClick(m, x, topY + 98))  { ActivateInputField(world, state, EditField::BODY_FRICTION); return; }
-            if (CheckInputBoxClick(m, x, topY + 152)) { ActivateInputField(world, state, EditField::BODY_WIDTH); return; }
-            if (CheckInputBoxClick(m, x, topY + 206)) { ActivateInputField(world, state, EditField::BODY_HEIGHT); return; }
-            if (CheckInputBoxClick(m, x, topY + 260)) { ActivateInputField(world, state, EditField::BODY_FORCE_X); return; }
+            if (CheckInputBoxClick(m, x, topY + 40))  { ActivateInputField(world, state, EditField::BODY_MASS); return; }
+            if (CheckInputBoxClick(m, x, topY + 90))  { ActivateInputField(world, state, EditField::BODY_FRICTION); return; }
 
-            if (PointInRect(m, {x, topY + 314, 130, 26})) {
+            if (b.shape == ShapeType::CIRCLE) {
+                if (CheckInputBoxClick(m, x, topY + 140)) { ActivateInputField(world, state, EditField::BODY_RADIUS); return; }
+                if (CheckInputBoxClick(m, x, topY + 190)) { ActivateInputField(world, state, EditField::BODY_RESTITUTION); return; }
+            } else {
+                if (CheckInputBoxClick(m, x, topY + 140)) { ActivateInputField(world, state, EditField::BODY_WIDTH); return; }
+                if (CheckInputBoxClick(m, x, topY + 190)) { ActivateInputField(world, state, EditField::BODY_HEIGHT); return; }
+            }
+
+            if (CheckInputBoxClick(m, x, topY + 240)) { ActivateInputField(world, state, EditField::BODY_FORCE_X); return; }
+
+            if (PointInRect(m, {x, topY + 294, 130, 26})) {
                 commitEditField(world, state);
                 b.canRotate = !b.canRotate;
                 if (!b.canRotate) { b.angle = 0.0f; b.angVel = 0.0f; }
                 b.updateMassData();
                 return;
             }
-            if (PointInRect(m, {x + 138, topY + 314, 130, 26})) {
+            if (PointInRect(m, {x + 138, topY + 294, 130, 26})) {
                 commitEditField(world, state);
                 b.angle = 0.0f;
                 b.angVel = 0.0f;
                 world.resolveEditorOverlap(b.id);
                 return;
             }
-            // Индивидуальное скрытие тела (с сохранением его трассера)
-            if (PointInRect(m, {x, topY + 346, w, 26})) {
+
+            if (PointInRect(m, {x, topY + 326, w, 26})) {
                 commitEditField(world, state);
                 b.hidden = !b.hidden;
+                return;
+            }
+
+            // 3 отдельные кнопки трассера: [ Нет ] [ По времени ] [ Вечный ]
+            float trBtnY = topY + 376.0f;
+            if (PointInRect(m, {x, trBtnY, 76.0f, 26.0f})) {
+                commitEditField(world, state);
+                b.trailMode = 0;
+                b.clearTrail();
+                return;
+            }
+            if (PointInRect(m, {x + 82.0f, trBtnY, 104.0f, 26.0f})) {
+                commitEditField(world, state);
+                b.trailMode = 1;
+                return;
+            }
+            if (PointInRect(m, {x + 192.0f, trBtnY, 76.0f, 26.0f})) {
+                commitEditField(world, state);
+                b.trailMode = 2;
+                return;
+            }
+
+            if (b.trailMode == 1 && CheckInputBoxClick(m, x, topY + 408.0f)) {
+                ActivateInputField(world, state, EditField::BODY_TRAIL_LIFETIME);
                 return;
             }
 
@@ -574,20 +574,16 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
             world.updateStaticTelemetry();
             return;
         }
-
         if (CheckInputBoxClick(m, x, topY + 84)) { ActivateInputField(world, state, EditField::ROPE_LENGTH); return; }
-
         if (PointInRect(m, {x, topY + 140, w, 28})) {
             commitEditField(world, state);
             world.syncRopeLengthToAttachedBody(r.id);
             return;
         }
-
         if (!r.isRigid && CheckInputBoxClick(m, x, topY + 178)) {
             ActivateInputField(world, state, EditField::ROPE_STIFFNESS);
             return;
         }
-
         if (r.idB != -1 && PointInRect(m, {x, topY + 236, w, 28})) {
             commitEditField(world, state);
             r.freePos = world.bodies[r.idB].localToWorld(r.offsetB);
@@ -596,7 +592,6 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
             world.updateStaticTelemetry();
             return;
         }
-
         if (PointInRect(m, {x, (float)screenH - 48.0f, w, 32})) {
             commitEditField(world, state);
             int delId = state.selectedRopeId;
@@ -608,23 +603,51 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         return;
     }
 
-    // Не выбран ни один объект: Параметры среды + Лабораторные стенды
-    if (CheckInputBoxClick(m, x, topY + 44)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
+    // Параметры среды (когда ничего не выбрано)
+    if (CheckInputBoxClick(m, x, topY + 40)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
+    if (PointInRect(m, {x, topY + 92, 128, 26}))       { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
+    if (PointInRect(m, {x + 140, topY + 92, 128, 26})) { commitEditField(world, state); world.G = 10.0f; world.updateStaticTelemetry(); return; }
+    if (CheckInputBoxClick(m, x, topY + 124)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
+    if (CheckInputBoxClick(m, x, topY + 174)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
 
-    if (PointInRect(m, {x, topY + 98, 128, 26}))       { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
-    if (PointInRect(m, {x + 140, topY + 98, 128, 26})) { commitEditField(world, state); world.G = 10.0f; world.updateStaticTelemetry(); return; }
-
-    if (CheckInputBoxClick(m, x, topY + 134)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
-    if (CheckInputBoxClick(m, x, topY + 188)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
-
-    if (PointInRect(m, {x, topY + 244, w, 28})) {
+    if (PointInRect(m, {x, topY + 226, w, 28})) {
         commitEditField(world, state);
         state.camPos = {-0.8f, 4.3f};
         state.camZoom = 1.0f;
         return;
     }
 
-    float labY = topY + 314.0f;
+    // 3 отдельные кнопки глобального режима трассеров: [ Нет ] [ По времени ] [ Вечный ]
+    float wTrBtnY = topY + 280.0f;
+    if (PointInRect(m, {x, wTrBtnY, 76.0f, 26.0f})) {
+        commitEditField(world, state);
+        world.defaultTrailMode = 0;
+        for (auto& b : world.bodies) { b.trailMode = 0; b.clearTrail(); }
+        return;
+    }
+    if (PointInRect(m, {x + 82.0f, wTrBtnY, 104.0f, 26.0f})) {
+        commitEditField(world, state);
+        world.defaultTrailMode = 1;
+        for (auto& b : world.bodies) b.trailMode = 1;
+        return;
+    }
+    if (PointInRect(m, {x + 192.0f, wTrBtnY, 76.0f, 26.0f})) {
+        commitEditField(world, state);
+        world.defaultTrailMode = 2;
+        for (auto& b : world.bodies) b.trailMode = 2;
+        return;
+    }
+
+    float sepY = topY + 314.0f;
+    if (world.defaultTrailMode == 1) {
+        if (CheckInputBoxClick(m, x, topY + 312.0f)) {
+            ActivateInputField(world, state, EditField::WORLD_TRAIL_LIFETIME);
+            return;
+        }
+        sepY = topY + 368.0f;
+    }
+
+    float labY = sepY + 30.0f;
     for (int i = 0; i < 4; ++i) {
         if (PointInRect(m, {x, labY + i * 34.0f, w, 29.0f})) {
             commitEditField(world, state);

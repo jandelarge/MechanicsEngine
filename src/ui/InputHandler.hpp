@@ -23,6 +23,7 @@ enum class EditField {
     BODY_HEIGHT,
     BODY_RADIUS,
     BODY_FORCE_X,
+    BODY_TRAIL_LIFETIME,
     SUPPORT_X,
     SUPPORT_Y,
     SUPPORT_WIDTH,
@@ -31,7 +32,8 @@ enum class EditField {
     ROPE_STIFFNESS,
     WORLD_GRAVITY,
     WORLD_SUBSTEPS,
-    NEW_ROPE_LENGTH
+    NEW_ROPE_LENGTH,
+    WORLD_TRAIL_LIFETIME
 };
 
 struct TelemetrySample {

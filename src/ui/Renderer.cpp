@@ -97,7 +97,7 @@ void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int s
 
 void Renderer::drawTrails(const PhysicsWorld& world, const AppState& state, int sw, int sh) const {
     for (const auto& b : world.bodies) {
-        if (b.isStatic || b.trail.size() < 2) continue;
+        if (b.isStatic || b.trailMode == 0 || b.trail.size() < 2) continue;
 
         bool isBodyHidden = state.hideAllBodies || b.hidden;
         bool isSelected   = (b.id == state.selectedBodyId) || (b.id == state.hoveredBodyId);
@@ -191,12 +191,11 @@ void Renderer::drawOscilloscope(const PhysicsWorld& world, const AppState& state
     const char* targetTitle = (state.trackedBodyId >= 0 && state.trackedBodyId < (int)world.bodies.size())
                             ? TextFormat("Осциллограф (#%d)", state.trackedBodyId + 1)
                             : "Осциллограф";
-    DrawTextEx(fontBold, targetTitle, {gr.x + 22.0f, gr.y + 9.0f}, 16, 1.0f, COL_GOLD);
+    DrawTextEx(fontBold, "Осциллограф", {gr.x + 22.0f, gr.y + 9.0f}, 17, 1.0f, COL_GOLD);
 
-    // Вкладки и кнопка закрытия привязаны к правому краю окна, чтобы корректно двигаться при ресайзе
-    drawButton({gr.x + gr.width - 226.0f, gr.y + 7.0f, 82.0f, 22.0f}, "Энергия", state.graphTab == 0, COL_GOLD);
-    drawButton({gr.x + gr.width - 140.0f, gr.y + 7.0f, 108.0f, 22.0f}, "Скорость/Силы", state.graphTab == 1, COL_GOLD);
-    drawButton({gr.x + gr.width - 26.0f,  gr.y + 7.0f, 20.0f, 22.0f}, "X", false, COL_WINE_BRIGHT);
+    drawButton({gr.x + gr.width - 266.0f, gr.y + 6.0f, 90.0f, 24.0f},  "Энергия",       state.graphTab == 0, COL_GOLD);
+    drawButton({gr.x + gr.width - 170.0f, gr.y + 6.0f, 136.0f, 24.0f}, "Скорость/Силы", state.graphTab == 1, COL_GOLD);
+    drawButton({gr.x + gr.width - 28.0f,  gr.y + 6.0f, 22.0f, 24.0f},  "X",             false, COL_WINE_BRIGHT);
 
     Rectangle plot = {gr.x + 12.0f, gr.y + 40.0f, gr.width - 24.0f, gr.height - 76.0f};
     DrawRectangleRec(plot, {22, 19, 18, 255});
@@ -639,67 +638,59 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
 
             drawButton({x, (float)sh - 48.0f, w, 32}, "Удалить опору", false, COL_WINE_BRIGHT);
             return;
-        } else if (b.shape == ShapeType::CIRCLE) {
-            DrawTextEx(fontBold, TextFormat("Свойства шара #%d", b.id + 1), {x, topY + 12}, 18, 1.0f, COL_GOLD);
-
-            drawValueInputRow(x, topY + 44,  "Масса m", TextFormat("%.1f кг", b.mass),
-                              state.editingField == EditField::BODY_MASS, state.inputBuffer);
-            drawValueInputRow(x, topY + 98,  "Коэффициент трения \xCE\xBC", TextFormat("%.2f", b.friction),
-                              state.editingField == EditField::BODY_FRICTION, state.inputBuffer);
-            drawValueInputRow(x, topY + 152, "Радиус шара R", TextFormat("%.2f м", b.radius),
-                              state.editingField == EditField::BODY_RADIUS, state.inputBuffer);
-            drawValueInputRow(x, topY + 206, "Упругость отскока e", TextFormat("%.2f", b.restitution),
-                              state.editingField == EditField::BODY_RESTITUTION, state.inputBuffer);
-            drawValueInputRow(x, topY + 260, "Внешняя сила тяги F", TextFormat("%.1f Н", b.appliedForceX),
-                              state.editingField == EditField::BODY_FORCE_X, state.inputBuffer);
-
-            drawButton({x, topY + 314, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
-            drawButton({x + 138, topY + 314, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
-            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (виден трассер)" : "Скрыть тело (оставить трассер)", b.hidden, COL_GOLD);
-
-            float ty = topY + 380;
-            DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
-            DrawTextEx(fontBold, "Телеметрия", {x, ty + 8}, 17, 1.0f, COL_GOLD);
-            DrawTextEx(fontMain, TextFormat("Момент инерции I: %.2f кг*м\xC2\xB2", b.inertia), {x, ty + 30}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Угол / \xCF\x89: %.1f\xC2\xB0 (%.2f рад/с)", b.angle * 57.2958f, b.angVel), {x, ty + 49}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Скорость |v|: %.2f м/с", b.vel.length()), {x, ty + 68}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Сила тяжести mg: %.1f Н", b.mass * world.G), {x, ty + 87}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Реакция опоры N: %.1f Н", b.normalForce), {x, ty + 106}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Давление сверху P: %.1f Н", b.topLoadForce), {x, ty + 125}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Сила трения Fтр: %.1f Н", b.frictionForce), {x, ty + 144}, 15, 1.0f, COL_TEXT_MUTED);
-
-            drawButton({x, (float)sh - 48.0f, w, 32}, "Удалить шар", false, COL_WINE_BRIGHT);
-            return;
         } else {
-            DrawTextEx(fontBold, TextFormat("Свойства бруска #%d", b.id + 1), {x, topY + 12}, 18, 1.0f, COL_GOLD);
+            DrawTextEx(fontBold, b.shape == ShapeType::CIRCLE ? TextFormat("Свойства шара #%d", b.id + 1) : TextFormat("Свойства бруска #%d", b.id + 1), {x, topY + 10}, 18, 1.0f, COL_GOLD);
 
-            drawValueInputRow(x, topY + 44,  "Масса m", TextFormat("%.1f кг", b.mass),
+            drawValueInputRow(x, topY + 40,  "Масса m", TextFormat("%.1f кг", b.mass),
                               state.editingField == EditField::BODY_MASS, state.inputBuffer);
-            drawValueInputRow(x, topY + 98,  "Коэффициент трения \xCE\xBC", TextFormat("%.2f", b.friction),
+            drawValueInputRow(x, topY + 90,  "Коэффициент трения \xCE\xBC", TextFormat("%.2f", b.friction),
                               state.editingField == EditField::BODY_FRICTION, state.inputBuffer);
-            drawValueInputRow(x, topY + 152, "Ширина W", TextFormat("%.2f м", b.width),
-                              state.editingField == EditField::BODY_WIDTH, state.inputBuffer);
-            drawValueInputRow(x, topY + 206, "Высота H", TextFormat("%.2f м", b.height),
-                              state.editingField == EditField::BODY_HEIGHT, state.inputBuffer);
-            drawValueInputRow(x, topY + 260, "Внешняя сила тяги F", TextFormat("%.1f Н", b.appliedForceX),
+
+            if (b.shape == ShapeType::CIRCLE) {
+                drawValueInputRow(x, topY + 140, "Радиус шара R", TextFormat("%.2f м", b.radius),
+                                  state.editingField == EditField::BODY_RADIUS, state.inputBuffer);
+                drawValueInputRow(x, topY + 190, "Упругость отскока e", TextFormat("%.2f", b.restitution),
+                                  state.editingField == EditField::BODY_RESTITUTION, state.inputBuffer);
+            } else {
+                drawValueInputRow(x, topY + 140, "Ширина W", TextFormat("%.2f м", b.width),
+                                  state.editingField == EditField::BODY_WIDTH, state.inputBuffer);
+                drawValueInputRow(x, topY + 190, "Высота H", TextFormat("%.2f м", b.height),
+                                  state.editingField == EditField::BODY_HEIGHT, state.inputBuffer);
+            }
+
+            drawValueInputRow(x, topY + 240, "Внешняя сила тяги F", TextFormat("%.1f Н", b.appliedForceX),
                               state.editingField == EditField::BODY_FORCE_X, state.inputBuffer);
 
-            drawButton({x, topY + 314, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
-            drawButton({x + 138, topY + 314, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
-            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (виден трассер)" : "Скрыть тело (оставить трассер)", b.hidden, COL_GOLD);
+            drawButton({x, topY + 294, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
+            drawButton({x + 138, topY + 294, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
 
-            float ty = topY + 380;
+            drawButton({x, topY + 326, w, 26}, b.hidden ? "Тело скрыто (виден трассер)" : "Скрыть тело (оставить трассер)", b.hidden, COL_GOLD);
+
+            // 3 отдельные кнопки режима трассера тела
+            DrawTextEx(fontMain, "Трассер тела:", {x, topY + 356}, 15, 1.0f, COL_TEXT_MUTED);
+            float trBtnY = topY + 376.0f;
+            drawButton({x,          trBtnY, 76.0f,  26.0f}, "Нет",        b.trailMode == 0, COL_GOLD);
+            drawButton({x + 82.0f,  trBtnY, 104.0f, 26.0f}, "По времени", b.trailMode == 1, COL_GOLD);
+            drawButton({x + 192.0f, trBtnY, 76.0f,  26.0f}, "Вечный",     b.trailMode == 2, COL_GOLD);
+
+            float ty = topY + 410.0f;
+            if (b.trailMode == 1) {
+                drawValueInputRow(x, topY + 408.0f, "Удалять через", TextFormat("%.1f с", b.trailLifetime),
+                                  state.editingField == EditField::BODY_TRAIL_LIFETIME, state.inputBuffer);
+                ty = topY + 464.0f;
+            }
+
             DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
-            DrawTextEx(fontBold, "Телеметрия", {x, ty + 8}, 17, 1.0f, COL_GOLD);
-            DrawTextEx(fontMain, TextFormat("Момент инерции I: %.2f кг*м\xC2\xB2", b.inertia), {x, ty + 30}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Угол / \xCF\x89: %.1f\xC2\xB0 (%.2f рад/с)", b.angle * 57.2958f, b.angVel), {x, ty + 49}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Скорость |v|: %.2f м/с", b.vel.length()), {x, ty + 68}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Сила тяжести mg: %.1f Н", b.mass * world.G), {x, ty + 87}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Реакция опоры N: %.1f Н", b.normalForce), {x, ty + 106}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Давление сверху P: %.1f Н", b.topLoadForce), {x, ty + 125}, 15, 1.0f, COL_TEXT_MUTED);
-            DrawTextEx(fontMain, TextFormat("Сила трения Fтр: %.1f Н", b.frictionForce), {x, ty + 144}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontBold, "Телеметрия", {x, ty + 6}, 17, 1.0f, COL_GOLD);
+            DrawTextEx(fontMain, TextFormat("Момент инерции I: %.2f кг*м\xC2\xB2", b.inertia), {x, ty + 26}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Угол / \xCF\x89: %.1f\xC2\xB0 (%.2f рад/с)", b.angle * 57.2958f, b.angVel), {x, ty + 44}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Скорость |v|: %.2f м/с", b.vel.length()), {x, ty + 62}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Сила тяжести mg: %.1f Н", b.mass * world.G), {x, ty + 80}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Реакция опоры N: %.1f Н", b.normalForce), {x, ty + 98}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Давление сверху P: %.1f Н", b.topLoadForce), {x, ty + 116}, 15, 1.0f, COL_TEXT_MUTED);
+            DrawTextEx(fontMain, TextFormat("Сила трения Fтр: %.1f Н", b.frictionForce), {x, ty + 134}, 15, 1.0f, COL_TEXT_MUTED);
 
-            drawButton({x, (float)sh - 48.0f, w, 32}, "Удалить брусок", false, COL_WINE_BRIGHT);
+            drawButton({x, (float)sh - 48.0f, w, 32}, b.shape == ShapeType::CIRCLE ? "Удалить шар" : "Удалить брусок", false, COL_WINE_BRIGHT);
             return;
         }
     }
@@ -744,27 +735,40 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
         return;
     }
 
-    DrawTextEx(fontBold, "Параметры среды", {x, topY + 12}, 18, 1.0f, COL_GOLD);
+    DrawTextEx(fontBold, "Параметры среды", {x, topY + 10}, 18, 1.0f, COL_GOLD);
 
-    drawValueInputRow(x, topY + 44, "Ускорение g", TextFormat("%.2f м/с\xC2\xB2", world.G),
+    drawValueInputRow(x, topY + 40, "Ускорение g", TextFormat("%.2f м/с\xC2\xB2", world.G),
                       state.editingField == EditField::WORLD_GRAVITY, state.inputBuffer);
 
-    drawButton({x, topY + 98, 128, 26}, "g = 9.81", std::abs(world.G - 9.81f) < 0.02f, COL_GOLD);
-    drawButton({x + 140, topY + 98, 128, 26}, "g = 10.0", std::abs(world.G - 10.0f) < 0.02f, COL_GOLD);
+    drawButton({x, topY + 92, 128, 26}, "g = 9.81", std::abs(world.G - 9.81f) < 0.02f, COL_GOLD);
+    drawButton({x + 140, topY + 92, 128, 26}, "g = 10.0", std::abs(world.G - 10.0f) < 0.02f, COL_GOLD);
 
-    drawValueInputRow(x, topY + 134, "Точность расчета", TextFormat("%d шаг.", world.substeps),
+    drawValueInputRow(x, topY + 124, "Точность расчета", TextFormat("%d шаг.", world.substeps),
                       state.editingField == EditField::WORLD_SUBSTEPS, state.inputBuffer);
 
-    drawValueInputRow(x, topY + 188, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
+    drawValueInputRow(x, topY + 174, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
                       state.editingField == EditField::NEW_ROPE_LENGTH, state.inputBuffer);
 
-    drawButton({x, topY + 244, w, 28}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
+    drawButton({x, topY + 226, w, 28}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
 
-    float sepY = topY + 282.0f;
+    // 3 отдельные кнопки глобального режима трассеров
+    DrawTextEx(fontMain, "Трассеры всех тел:", {x, topY + 260}, 15, 1.0f, COL_TEXT_MUTED);
+    float wTrBtnY = topY + 280.0f;
+    drawButton({x,          wTrBtnY, 76.0f,  26.0f}, "Нет",        world.defaultTrailMode == 0, COL_GOLD);
+    drawButton({x + 82.0f,  wTrBtnY, 104.0f, 26.0f}, "По времени", world.defaultTrailMode == 1, COL_GOLD);
+    drawButton({x + 192.0f, wTrBtnY, 76.0f,  26.0f}, "Вечный",     world.defaultTrailMode == 2, COL_GOLD);
+
+    float sepY = topY + 314.0f;
+    if (world.defaultTrailMode == 1) {
+        drawValueInputRow(x, topY + 312.0f, "Удалять через", TextFormat("%.1f с", world.defaultTrailLifetime),
+                          state.editingField == EditField::WORLD_TRAIL_LIFETIME, state.inputBuffer);
+        sepY = topY + 368.0f;
+    }
+
     DrawLine((int)x, (int)sepY, (int)(x + w), (int)sepY, {64, 54, 50, 255});
-    DrawTextEx(fontBold, "Лабораторные стенды", {x, sepY + 8.0f}, 17, 1.0f, COL_GOLD);
+    DrawTextEx(fontBold, "Лабораторные стенды", {x, sepY + 6.0f}, 17, 1.0f, COL_GOLD);
 
-    float labY = topY + 314.0f;
+    float labY = sepY + 30.0f;
     drawButton({x, labY + 0 * 34.0f, w, 29.0f}, "Лаб. 1: Горка (Шар vs Брусок)", false, COL_GOLD);
     drawButton({x, labY + 1 * 34.0f, w, 29.0f}, "Лаб. 2: Закон Гука и Маятник", false, COL_GOLD);
     drawButton({x, labY + 2 * 34.0f, w, 29.0f}, "Лаб. 3: Импульс и соударение", false, COL_GOLD);

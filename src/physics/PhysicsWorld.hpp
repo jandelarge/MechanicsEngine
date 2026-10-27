@@ -33,6 +33,8 @@ public:
     float G = 9.81f;
     int substeps = 24;
     float simTime = 0.0f;
+    int defaultTrailMode = 1;
+    float defaultTrailLifetime = 5.0f;
 
     // Настройки трассеров: 0 = Выкл (по дефолту), 1 = Стирать по времени, 2 = Оставлять всё
     int trailMode = 0;

@@ -232,6 +232,8 @@ static OBBManifold CollideBodies(const Body& a, const Body& b, float margin = 0.
 int PhysicsWorld::createBody(Vec2 pos, float w, float h, float mass, bool isStatic) {
     int id = (int)bodies.size();
     bodies.emplace_back(id, pos, w, h, mass, isStatic);
+    bodies.back().trailMode = defaultTrailMode;
+    bodies.back().trailLifetime = defaultTrailLifetime;
     return id;
 }
 
@@ -247,6 +249,8 @@ int PhysicsWorld::createCircle(Vec2 pos, float radius, float mass, bool isStatic
     b.friction = 0.5f;
     b.restitution = 0.35f;
     b.isStatic = isStatic;
+    b.trailMode = defaultTrailMode;
+    b.trailLifetime = defaultTrailLifetime;
     b.name = "Шар";
     b.updateMassData();
     bodies.push_back(b);
@@ -570,11 +574,10 @@ Vec2 PhysicsWorld::getSnapOffset(int bodyId, const Vec2& worldClick) const {
 }
 
 void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, int draggedFreeRopeId) {
-    // Фиксируем стартовую точку трассера перед первым шагом
     if (simTime == 0.0f) {
         for (auto& b : bodies) {
-            if (!b.isStatic && b.trail.empty()) {
-                b.trail.push_back({b.pos, true});
+            if (!b.isStatic && b.trailMode != 0 && b.trail.empty()) {
+                b.trail.push_back({b.pos, true, 0.0f});
                 b.lastStrobeTime = 0.0f;
             }
         }
@@ -770,20 +773,31 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
         ropes[i].tension = frameRopeTensionSum[i] / (float)steps;
     }
 
-    // Запись точек трассера (Motion Trails) со стробоскопом каждые 0.10 с
+    // Запись трассеров: 0 = Нет, 1 = Удаляется по времени, 2 = Не удаляется
     for (auto& b : bodies) {
         if (b.isStatic) continue;
+        if (b.trailMode == 0) {
+            if (!b.trail.empty()) b.clearTrail();
+            continue;
+        }
+
         bool needStrobe = (simTime - b.lastStrobeTime >= 0.10f);
         bool movedEnough = b.trail.empty() || ((b.pos - b.trail.back().pos).lengthSq() >= 0.0004f);
 
         if (movedEnough) {
             if (needStrobe) b.lastStrobeTime = simTime;
-            b.trail.push_back({b.pos, needStrobe});
-            if (b.trail.size() > 1600) {
+            b.trail.push_back({b.pos, needStrobe, simTime});
+            if (b.trailMode == 2 && b.trail.size() > 5000) {
                 b.trail.erase(b.trail.begin());
             }
         } else if (needStrobe && !b.trail.empty()) {
             b.lastStrobeTime = simTime;
+        }
+
+        if (b.trailMode == 1) {
+            while (!b.trail.empty() && (simTime - b.trail.front().time) > b.trailLifetime) {
+                b.trail.erase(b.trail.begin());
+            }
         }
     }
 
