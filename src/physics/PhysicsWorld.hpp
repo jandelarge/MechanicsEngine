@@ -24,6 +24,7 @@ struct ContactConstraint {
 struct WorldSnapshot {
     std::vector<Body> bodies;
     std::vector<RopeLink> ropes;
+    float simTime = 0.0f;
     bool valid = false;
 };
 
@@ -31,6 +32,11 @@ class PhysicsWorld {
 public:
     float G = 9.81f;
     int substeps = 24;
+    float simTime = 0.0f;
+
+    // Настройки трассеров: 0 = Выкл (по дефолту), 1 = Стирать по времени, 2 = Оставлять всё
+    int trailMode = 0;
+    float trailDuration = 2.5f;
 
     std::vector<Body> bodies;
     std::vector<RopeLink> ropes;
@@ -50,6 +56,7 @@ public:
 
     void removeBody(int id);
     void removeRope(int id);
+    void clearAllTrails();
     void clearScene();
     void setupDefaultScene();
     void loadLabPreset(int presetId);

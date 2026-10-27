@@ -62,7 +62,6 @@ void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int s
     int startX = (int)std::floor(leftW / gridStep) * gridStep;
     int endX   = (int)std::ceil(rightW / gridStep) * gridStep;
 
-    // Вертикальные линии сетки (начинаются строго от пола и идут вверх)
     for (int x = startX; x <= endX; x += gridStep) {
         Vector2 pTop = worldToScreen({(float)x, topW}, sw, sh);
         Vector2 pBot = worldToScreen({(float)x, world.groundY}, sw, sh);
@@ -70,8 +69,6 @@ void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int s
         DrawLineV(pTop, pBot, isMajor ? Color{40, 36, 34, 255} : Color{31, 28, 27, 255});
     }
 
-    // Горизонтальные линии сетки: отсчитываются ровно от уровня пола world.groundY,
-    // чтобы самая первая клетка на полу была полным квадратом (1 м, 2 м, ... 5 м над полом)
     int maxStepsY = (int)std::ceil((topW - world.groundY) / gridStep);
     for (int k = gridStep; k <= maxStepsY * gridStep; k += gridStep) {
         float y = world.groundY + (float)k;
@@ -82,7 +79,6 @@ void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int s
         DrawLineV(pL, pR, isMajor ? Color{40, 36, 34, 255} : Color{31, 28, 27, 255});
     }
 
-    // Бесконечный пол с разметкой метров
     Vector2 gL = worldToScreen({leftW, world.groundY}, sw, sh);
     Vector2 gR = worldToScreen({rightW, world.groundY}, sw, sh);
     DrawLineEx(gL, gR, 2.0f, COL_GOLD_DIM);
@@ -97,6 +93,202 @@ void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int s
             DrawTextEx(fontSmall, lbl, {pt.x - ts.x * 0.5f, pt.y + 10.0f}, 14, 1.0f, Fade(COL_TEXT_MUTED, 0.75f));
         }
     }
+}
+
+void Renderer::drawTrails(const PhysicsWorld& world, const AppState& state, int sw, int sh) const {
+    if (world.trailMode == 0) return;
+
+    for (const auto& b : world.bodies) {
+        if (b.isStatic || b.trail.size() < 2) continue;
+
+        bool isBodyHidden = b.hidden;
+        bool isSelected   = (b.id == state.selectedBodyId) || (b.id == state.hoveredBodyId);
+
+        float baseAlpha = (isBodyHidden || isSelected) ? 0.92f : 0.60f;
+        float thick     = isBodyHidden ? 2.4f : 1.8f;
+
+        for (size_t i = 1; i < b.trail.size(); ++i) {
+            float alpha = baseAlpha;
+            if (world.trailMode == 1 && world.trailDuration > 0.05f) {
+                float age = world.simTime - b.trail[i].time;
+                float fade = 1.0f - std::clamp(age / world.trailDuration, 0.0f, 1.0f);
+                alpha *= fade;
+            }
+            if (alpha <= 0.02f) continue;
+
+            Vector2 p0 = worldToScreen(b.trail[i - 1].pos, sw, sh);
+            Vector2 p1 = worldToScreen(b.trail[i].pos, sw, sh);
+            DrawLineEx(p0, p1, thick, Fade(COL_GOLD, alpha));
+        }
+
+        for (size_t i = 0; i < b.trail.size(); ++i) {
+            if (b.trail[i].strobe) {
+                float alpha = 1.0f;
+                if (world.trailMode == 1 && world.trailDuration > 0.05f) {
+                    float age = world.simTime - b.trail[i].time;
+                    alpha = 1.0f - std::clamp(age / world.trailDuration, 0.0f, 1.0f);
+                }
+                if (alpha <= 0.05f) continue;
+
+                Vector2 pt = worldToScreen(b.trail[i].pos, sw, sh);
+                DrawCircleV(pt, isBodyHidden ? 3.6f : 2.8f, Fade(isBodyHidden ? COL_TEXT_CREAM : COL_GOLD, alpha));
+            }
+        }
+
+        if (isBodyHidden) {
+            Vector2 cur = worldToScreen(b.pos, sw, sh);
+            DrawCircleV(cur, 5.0f, COL_WINE_BRIGHT);
+            DrawCircleLines((int)cur.x, (int)cur.y, 5.0f, COL_GOLD);
+        }
+    }
+}
+
+void Renderer::drawChronoBar(const PhysicsWorld& world, const AppState& state, int sw) const {
+    Rectangle bar = InputHandler::getChronoBarRect(sw);
+
+    DrawRectangleRounded({bar.x + 2.0f, bar.y + 4.0f, bar.width, bar.height}, 0.45f, 12, {10, 8, 8, 150});
+    DrawRectangleRounded(bar, 0.45f, 12, {34, 29, 28, 238});
+    DrawRectangleRoundedLinesEx(bar, 0.45f, 12, 1.4f, Fade(COL_GOLD, 0.45f));
+
+    float x = bar.x + 8.0f;
+    float y = bar.y + 6.0f;
+    float h = 28.0f;
+
+    // 1. Секундомер t = 0.00 с
+    Rectangle timeBox = {x, y, 104.0f, h};
+    DrawRectangleRounded(timeBox, 0.3f, 6, {24, 21, 20, 255});
+    DrawRectangleRoundedLinesEx(timeBox, 0.3f, 6, 1.0f, {68, 58, 54, 255});
+    const char* tStr = TextFormat("t = %.2f с", world.simTime);
+    Vector2 ts = MeasureTextEx(fontMain, tStr, 15, 1.0f);
+    DrawTextEx(fontMain, tStr, {timeBox.x + (timeBox.width - ts.x) * 0.5f, timeBox.y + (h - ts.y) * 0.5f},
+               15, 1.0f, state.paused ? COL_GOLD : COL_TEXT_CREAM);
+    x += 110.0f;
+
+    // 2. Кнопка сброса времени
+    drawButton({x, y, 68.0f, h}, "Сброс t", false, COL_GOLD);
+    x += 74.0f;
+
+    // Разделитель 1
+    DrawLineEx({x, bar.y + 9.0f}, {x, bar.y + bar.height - 9.0f}, 1.5f, Fade(COL_GOLD, 0.25f));
+    x += 6.0f;
+
+    // 3. Переключатели скорости времени Slow-Mo
+    float scales[3] = {0.25f, 0.5f, 1.0f};
+    const char* sLabels[3] = {"0.25x", "0.5x", "1.0x"};
+    for (int i = 0; i < 3; ++i) {
+        bool active = (std::abs(state.timeScale - scales[i]) < 0.03f);
+        drawButton({x, y, 48.0f, h}, sLabels[i], active, COL_GOLD);
+        x += 52.0f;
+    }
+
+    // Разделитель 2
+    x += 2.0f;
+    DrawLineEx({x, bar.y + 9.0f}, {x, bar.y + bar.height - 9.0f}, 1.5f, Fade(COL_GOLD, 0.25f));
+    x += 6.0f;
+
+    // 4. Кнопка пошагового кадра >| Шаг (самая правая)
+    drawButton({x, y, 68.0f, h}, ">| Шаг", false, COL_GOLD);
+}
+
+void Renderer::drawOscilloscope(const PhysicsWorld& /*world*/, const AppState& state, int sw, int sh) const {
+    if (!state.showGraph) return;
+
+    Rectangle gr = InputHandler::getGraphRect(state, sw, sh);
+    DrawRectangleRounded({gr.x + 3.0f, gr.y + 5.0f, gr.width, gr.height}, 0.06f, 10, {10, 8, 8, 185});
+    DrawRectangleRounded(gr, 0.06f, 10, {30, 26, 25, 248});
+
+    DrawRectangleRounded({gr.x, gr.y, gr.width, 34.0f}, 0.16f, 8, {38, 32, 31, 255});
+    DrawLineEx({gr.x + 1.0f, gr.y + 34.0f}, {gr.x + gr.width - 1.0f, gr.y + 34.0f}, 1.0f, {62, 52, 48, 255});
+    DrawRectangleRoundedLinesEx(gr, 0.06f, 10, (state.isDraggingGraph || state.isResizingGraph) ? 2.0f : 1.5f, COL_GOLD);
+
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            DrawCircleV({gr.x + 10.0f + c * 4.0f, gr.y + 12.0f + r * 5.0f}, 1.2f, COL_GOLD_DIM);
+        }
+    }
+
+    // Чистая подпись "Осциллограф" без номера
+    DrawTextEx(fontBold, "Осциллограф", {gr.x + 22.0f, gr.y + 9.0f}, 16, 1.0f, COL_GOLD);
+
+    // Расширенные кнопки вкладок: "Энергия" (86px) и "Скорость / Силы" (132px)
+    drawButton({gr.x + gr.width - 254.0f, gr.y + 6.0f, 86.0f,  23.0f}, "Энергия",         state.graphTab == 0, COL_GOLD);
+    drawButton({gr.x + gr.width - 164.0f, gr.y + 6.0f, 132.0f, 23.0f}, "Скорость / Силы", state.graphTab == 1, COL_GOLD);
+    drawButton({gr.x + gr.width - 26.0f,  gr.y + 6.0f, 20.0f,  23.0f}, "X",               false, COL_WINE_BRIGHT);
+
+    Rectangle plot = {gr.x + 12.0f, gr.y + 40.0f, gr.width - 24.0f, gr.height - 76.0f};
+    DrawRectangleRec(plot, {22, 19, 18, 255});
+    DrawRectangleLinesEx(plot, 1.0f, {58, 50, 46, 255});
+
+    for (int i = 1; i <= 3; ++i) {
+        float ly = plot.y + (plot.height * i) / 4.0f;
+        DrawLineV({plot.x, ly}, {plot.x + plot.width, ly}, {36, 32, 30, 255});
+    }
+    for (int i = 1; i <= 4; ++i) {
+        float lx = plot.x + (plot.width * i) / 5.0f;
+        DrawLineV({lx, plot.y}, {lx, plot.y + plot.height}, {36, 32, 30, 255});
+    }
+
+    const auto& hist = state.telemetryHistory;
+    if (hist.size() >= 2) {
+        float maxVal = 1.0f;
+        for (const auto& s : hist) {
+            if (state.graphTab == 0) {
+                maxVal = std::max({maxVal, s.ek, s.ep, s.etot});
+            } else {
+                maxVal = std::max({maxVal, s.speed, s.normalF * 0.2f, s.frictionF * 0.2f});
+            }
+        }
+        maxVal *= 1.12f;
+
+        auto drawCurve = [&](auto getter, Color col, float scaleMult) {
+            for (size_t i = 1; i < hist.size(); ++i) {
+                float x0 = plot.x + ((float)(i - 1) / (float)(hist.size() - 1)) * plot.width;
+                float x1 = plot.x + ((float)i / (float)(hist.size() - 1)) * plot.width;
+                float v0 = std::clamp(getter(hist[i - 1]) * scaleMult / maxVal, 0.0f, 1.0f);
+                float v1 = std::clamp(getter(hist[i]) * scaleMult / maxVal, 0.0f, 1.0f);
+                Vector2 p0 = {x0, plot.y + plot.height - v0 * plot.height};
+                Vector2 p1 = {x1, plot.y + plot.height - v1 * plot.height};
+                DrawLineEx(p0, p1, 2.0f, col);
+            }
+        };
+
+        if (state.graphTab == 0) {
+            drawCurve([](const TelemetrySample& s) { return s.etot; }, {126, 186, 132, 255}, 1.0f);
+            drawCurve([](const TelemetrySample& s) { return s.ep; },   COL_GOLD, 1.0f);
+            drawCurve([](const TelemetrySample& s) { return s.ek; },   {96, 178, 224, 255}, 1.0f);
+        } else {
+            drawCurve([](const TelemetrySample& s) { return s.normalF; },   {126, 186, 132, 255}, 0.2f);
+            drawCurve([](const TelemetrySample& s) { return s.frictionF; }, {188, 122, 214, 255}, 0.2f);
+            drawCurve([](const TelemetrySample& s) { return s.speed; },     {214, 92, 92, 255}, 1.0f);
+        }
+    } else {
+        const char* hint = "Запустите симуляцию [Пробел] или [>| Шаг]";
+        Vector2 hs = MeasureTextEx(fontSmall, hint, 14, 1.0f);
+        DrawTextEx(fontSmall, hint, {plot.x + (plot.width - hs.x) * 0.5f, plot.y + (plot.height - hs.y) * 0.5f},
+                   14, 1.0f, COL_TEXT_MUTED);
+    }
+
+    TelemetrySample cur = hist.empty() ? TelemetrySample{} : hist.back();
+    float legY = gr.y + gr.height - 26.0f;
+    float colStep = (gr.width - 36.0f) / 3.0f;
+
+    if (state.graphTab == 0) {
+        DrawTextEx(fontSmall, TextFormat("Ek: %.1f Дж", cur.ek),      {gr.x + 14.0f,               legY}, 14, 1.0f, {96, 178, 224, 255});
+        DrawTextEx(fontSmall, TextFormat("Ep: %.1f Дж", cur.ep),      {gr.x + 14.0f + colStep,     legY}, 14, 1.0f, COL_GOLD);
+        DrawTextEx(fontSmall, TextFormat("Eполн: %.1f Дж", cur.etot), {gr.x + 14.0f + colStep * 2, legY}, 14, 1.0f, {126, 186, 132, 255});
+    } else {
+        DrawTextEx(fontSmall, TextFormat("|v|: %.2f м/с", cur.speed),   {gr.x + 14.0f,               legY}, 14, 1.0f, {214, 92, 92, 255});
+        DrawTextEx(fontSmall, TextFormat("N: %.1f Н", cur.normalF),     {gr.x + 14.0f + colStep,     legY}, 14, 1.0f, {126, 186, 132, 255});
+        DrawTextEx(fontSmall, TextFormat("Fтр: %.1f Н", cur.frictionF), {gr.x + 14.0f + colStep * 2, legY}, 14, 1.0f, {188, 122, 214, 255});
+    }
+
+    // Маркер ресайза в правом нижнем углу
+    Color gripCol = state.isResizingGraph ? COL_GOLD : COL_GOLD_DIM;
+    float rx = gr.x + gr.width - 4.0f;
+    float ry = gr.y + gr.height - 4.0f;
+    DrawLineEx({rx - 11.0f, ry}, {rx, ry - 11.0f}, 1.5f, gripCol);
+    DrawLineEx({rx - 7.0f,  ry}, {rx, ry - 7.0f},  1.5f, gripCol);
+    DrawLineEx({rx - 3.0f,  ry}, {rx, ry - 3.0f},  1.5f, gripCol);
 }
 
 void Renderer::drawButton(Rectangle r, const char* text, bool active, Color accent) const {
@@ -185,27 +377,27 @@ void Renderer::drawCreationIcon(int itemIndex, Vector2 center, Color col, bool a
     float cy = center.y;
 
     switch (itemIndex) {
-        case 0: { // Брусок
+        case 0: {
             Rectangle box = {cx - 7.5f, cy - 7.5f, 15.0f, 15.0f};
             DrawRectangleRounded(box, 0.2f, 4, Fade(col, active ? 0.35f : 0.15f));
             DrawRectangleRoundedLinesEx(box, 0.2f, 4, 1.8f, col);
             DrawCircleV({cx, cy}, 1.8f, col);
             break;
         }
-        case 1: { // Шар
+        case 1: {
             DrawCircleV({cx, cy}, 8.0f, Fade(col, active ? 0.35f : 0.15f));
             DrawCircleLines((int)cx, (int)cy, 8.0f, col);
             DrawLineEx({cx, cy}, {cx + 5.8f, cy - 5.2f}, 1.8f, col);
             DrawCircleV({cx, cy}, 1.8f, col);
             break;
         }
-        case 2: { // Опора
+        case 2: {
             Rectangle sup = {cx - 9.5f, cy - 3.5f, 19.0f, 7.0f};
             DrawRectangleRounded(sup, 0.8f, 6, Fade(col, active ? 0.28f : 0.12f));
             DrawRectangleRoundedLinesEx(sup, 0.8f, 6, 1.6f, col);
             break;
         }
-        case 3: { // Нить
+        case 3: {
             Vector2 a = {cx - 6.0f, cy - 6.0f};
             Vector2 b = {cx + 6.0f, cy + 6.0f};
             DrawLineEx(a, b, 2.0f, col);
@@ -215,7 +407,7 @@ void Renderer::drawCreationIcon(int itemIndex, Vector2 center, Color col, bool a
             DrawCircleLines((int)b.x, (int)b.y, 3.0f, col);
             break;
         }
-        case 4: { // Пружина
+        case 4: {
             Vector2 pts[6] = {
                 {cx - 7.0f, cy + 7.0f},
                 {cx - 5.5f, cy + 1.5f},
@@ -239,7 +431,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
     float cy = r.y + r.height * 0.5f;
 
     switch (index) {
-        case 0: { // Пуск / Пауза
+        case 0: {
             if (paused) {
                 DrawTriangle({cx - 5.0f, cy - 8.0f}, {cx - 5.0f, cy + 8.0f}, {cx + 8.0f, cy}, col);
             } else {
@@ -248,7 +440,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             }
             break;
         }
-        case 1: { // Сброс
+        case 1: {
             DrawRing({cx, cy}, 6.4f, 8.8f, 42.0f, 312.0f, 28, col);
             Vector2 tip       = {cx + 8.6f, cy - 2.4f};
             Vector2 outerBase = {cx + 7.2f, cy - 9.4f};
@@ -256,7 +448,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             DrawTriangle(tip, outerBase, innerBase, col);
             break;
         }
-        case 2: { // [1] Курсор
+        case 2: {
             Vector2 p1 = {cx - 6.0f, cy - 10.0f};
             Vector2 p2 = {cx - 6.0f, cy + 7.0f};
             Vector2 p3 = {cx + 6.0f, cy + 1.0f};
@@ -264,12 +456,46 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             DrawLineEx({cx - 2.0f, cy + 2.0f}, {cx + 3.0f, cy + 9.0f}, 2.5f, col);
             break;
         }
-        case 3: { // [2] Плюс [+]
+        case 3: {
             DrawLineEx({cx - 8.5f, cy}, {cx + 8.5f, cy}, 2.6f, col);
             DrawLineEx({cx, cy - 8.5f}, {cx, cy + 8.5f}, 2.6f, col);
             break;
         }
-        case 4: { // [3] Удалить (корзина)
+        case 4: {
+            DrawRectangleRoundedLinesEx({cx - 9.5f, cy - 7.5f, 19.0f, 15.0f}, 0.25f, 4, 1.6f, col);
+            Vector2 wPts[5] = {
+                {cx - 6.5f, cy + 1.0f},
+                {cx - 3.0f, cy - 4.0f},
+                {cx + 0.5f, cy + 4.0f},
+                {cx + 3.8f, cy - 2.5f},
+                {cx + 6.5f, cy + 0.5f}
+            };
+            for (int k = 0; k < 4; ++k) {
+                DrawLineEx(wPts[k], wPts[k + 1], 1.8f, col);
+            }
+            break;
+        }
+        case 5: {
+            Vector2 topArc[7], botArc[7];
+            for (int k = 0; k <= 6; ++k) {
+                float t = (float)k / 6.0f;
+                float x = cx - 9.5f + t * 19.0f;
+                float dy = std::sin(t * 3.14159265f) * 5.6f;
+                topArc[k] = {x, cy - dy};
+                botArc[k] = {x, cy + dy};
+            }
+            for (int k = 0; k < 6; ++k) {
+                DrawLineEx(topArc[k], topArc[k + 1], 1.8f, col);
+                DrawLineEx(botArc[k], botArc[k + 1], 1.8f, col);
+            }
+            DrawCircleV({cx, cy}, 2.7f, col);
+
+            if (active) {
+                DrawLineEx({cx - 8.5f, cy + 7.5f}, {cx + 8.5f, cy - 7.5f}, 2.3f, col);
+            }
+            break;
+        }
+        case 6: {
             DrawLineEx({cx - 8.0f, cy - 6.0f}, {cx + 8.0f, cy - 6.0f}, 2.0f, col);
             DrawLineEx({cx - 3.0f, cy - 8.5f}, {cx + 3.0f, cy - 8.5f}, 2.0f, col);
             DrawRectangleLinesEx({cx - 6.5f, cy - 5.0f, 13.0f, 14.0f}, 1.8f, col);
@@ -304,15 +530,17 @@ void Renderer::drawLiquidDock(int sh, const AppState& state) const {
     if (state.activeTool == ToolType::ADD_ROPE)    activeCreateName = "Создать: Нить [2]";
     if (state.activeTool == ToolType::ADD_SPRING)  activeCreateName = "Создать: Пружина [2]";
 
-    const char* tooltips[5] = {
+    const char* tooltips[7] = {
         state.paused ? "Запуск [Пробел]" : "Пауза [Пробел]",
         "Сброс [R]",
         "Курсор [1]",
         activeCreateName,
-        "Удалить [3]"
+        "Осциллограф [3]",
+        state.hideAllBodies ? "Показать все тела [4 / H]" : "Скрыть все тела [4 / H]",
+        "Удалить [5]"
     };
 
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 7; ++i) {
         Rectangle btn = InputHandler::getDockButtonRect(i, sh);
         bool hovered = (state.hoveredDockBtn == i);
         bool active = false;
@@ -320,7 +548,9 @@ void Renderer::drawLiquidDock(int sh, const AppState& state) const {
         if (i == 0) active = !state.paused;
         else if (i == 2) active = (state.activeTool == ToolType::SELECT_MOVE && !state.addMenuOpen);
         else if (i == 3) active = state.addMenuOpen || isCreationTool;
-        else if (i == 4) active = (state.activeTool == ToolType::DELETE_OBJ && !state.addMenuOpen);
+        else if (i == 4) active = state.showGraph;
+        else if (i == 5) active = state.hideAllBodies;
+        else if (i == 6) active = (state.activeTool == ToolType::DELETE_OBJ && !state.addMenuOpen);
 
         if (active) {
             DrawRectangleRounded(btn, 0.36f, 10, COL_WINE);
@@ -439,12 +669,11 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
             drawValueInputRow(x, topY + 260, "Внешняя сила тяги F", TextFormat("%.1f Н", b.appliedForceX),
                               state.editingField == EditField::BODY_FORCE_X, state.inputBuffer);
 
-            drawButton({x, topY + 316, w, 26},
-                       b.canRotate ? "Вращение шара: Вкл" : "Вращение шара: Выкл",
-                       b.canRotate, COL_GOLD);
-            drawButton({x, topY + 348, w, 26}, "Сбросить угол (0\xC2\xB0)", false, COL_GOLD);
+            drawButton({x, topY + 314, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
+            drawButton({x + 138, topY + 314, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
+            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (показать)" : "Скрыть это тело", b.hidden, COL_GOLD);
 
-            float ty = topY + 382;
+            float ty = topY + 380;
             DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
             DrawTextEx(fontBold, "Телеметрия", {x, ty + 8}, 17, 1.0f, COL_GOLD);
             DrawTextEx(fontMain, TextFormat("Момент инерции I: %.2f кг*м\xC2\xB2", b.inertia), {x, ty + 30}, 15, 1.0f, COL_TEXT_MUTED);
@@ -471,12 +700,11 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
             drawValueInputRow(x, topY + 260, "Внешняя сила тяги F", TextFormat("%.1f Н", b.appliedForceX),
                               state.editingField == EditField::BODY_FORCE_X, state.inputBuffer);
 
-            drawButton({x, topY + 316, w, 26},
-                       b.canRotate ? "Инерция вращения: Вкл" : "Инерция вращения: Выкл",
-                       b.canRotate, COL_GOLD);
-            drawButton({x, topY + 348, w, 26}, "Выровнять угол (0\xC2\xB0)", false, COL_GOLD);
+            drawButton({x, topY + 314, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
+            drawButton({x + 138, topY + 314, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
+            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (показать)" : "Скрыть это тело", b.hidden, COL_GOLD);
 
-            float ty = topY + 382;
+            float ty = topY + 380;
             DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
             DrawTextEx(fontBold, "Телеметрия", {x, ty + 8}, 17, 1.0f, COL_GOLD);
             DrawTextEx(fontMain, TextFormat("Момент инерции I: %.2f кг*м\xC2\xB2", b.inertia), {x, ty + 30}, 15, 1.0f, COL_TEXT_MUTED);
@@ -532,40 +760,60 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
         return;
     }
 
-    DrawTextEx(fontBold, "Параметры среды", {x, topY + 12}, 18, 1.0f, COL_GOLD);
+    // Параметры среды + Настройки трассеров + Лабораторные стенды
+    DrawTextEx(fontBold, "Параметры среды", {x, topY + 10}, 18, 1.0f, COL_GOLD);
 
-    drawValueInputRow(x, topY + 44, "Ускорение g", TextFormat("%.2f м/с\xC2\xB2", world.G),
+    drawValueInputRow(x, topY + 38, "Ускорение g", TextFormat("%.2f м/с\xC2\xB2", world.G),
                       state.editingField == EditField::WORLD_GRAVITY, state.inputBuffer);
 
-    drawButton({x, topY + 98, 128, 26}, "g = 9.81", std::abs(world.G - 9.81f) < 0.02f, COL_GOLD);
-    drawButton({x + 140, topY + 98, 128, 26}, "g = 10.0", std::abs(world.G - 10.0f) < 0.02f, COL_GOLD);
+    drawButton({x, topY + 90, 128, 25}, "g = 9.81", std::abs(world.G - 9.81f) < 0.02f, COL_GOLD);
+    drawButton({x + 140, topY + 90, 128, 25}, "g = 10.0", std::abs(world.G - 10.0f) < 0.02f, COL_GOLD);
 
-    drawValueInputRow(x, topY + 134, "Точность расчета", TextFormat("%d шаг.", world.substeps),
+    drawValueInputRow(x, topY + 122, "Точность расчета", TextFormat("%d шаг.", world.substeps),
                       state.editingField == EditField::WORLD_SUBSTEPS, state.inputBuffer);
 
-    drawValueInputRow(x, topY + 188, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
+    drawValueInputRow(x, topY + 174, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
                       state.editingField == EditField::NEW_ROPE_LENGTH, state.inputBuffer);
 
-    drawButton({x, topY + 244, w, 28}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
+    drawButton({x, topY + 228, w, 26}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
 
-    float sepY = topY + 282.0f;
-    DrawLine((int)x, (int)sepY, (int)(x + w), (int)sepY, {64, 54, 50, 255});
-    DrawTextEx(fontBold, "Лабораторные стенды", {x, sepY + 8.0f}, 17, 1.0f, COL_GOLD);
+    // Секция настройки трассеров (Motion Trails)
+    float trY = topY + 262.0f;
+    DrawLine((int)x, (int)trY, (int)(x + w), (int)trY, {64, 54, 50, 255});
+    DrawTextEx(fontBold, "Трассеры траекторий", {x, trY + 6.0f}, 17, 1.0f, COL_GOLD);
 
-    float labY = topY + 314.0f;
-    drawButton({x, labY + 0 * 34.0f, w, 29.0f}, "Лаб. 1: Горка (Шар vs Брусок)", false, COL_GOLD);
-    drawButton({x, labY + 1 * 34.0f, w, 29.0f}, "Лаб. 2: Закон Гука и Маятник", false, COL_GOLD);
-    drawButton({x, labY + 2 * 34.0f, w, 29.0f}, "Лаб. 3: Импульс и соударение", false, COL_GOLD);
-    drawButton({x, labY + 3 * 34.0f, w, 29.0f}, "Лаб. 4: Статика и предел трения", false, COL_GOLD);
+    const char* trailModeTxt = (world.trailMode == 0) ? "Трассеры: Выкл (по умолч.)"
+                             : (world.trailMode == 1) ? "Трассеры: По времени (стирать)"
+                                                      : "Трассеры: Оставлять всё";
+    drawButton({x, trY + 30.0f, w, 27.0f}, trailModeTxt, world.trailMode != 0, COL_GOLD);
 
-    drawButton({x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f}, "Демо-сцена", false, COL_GOLD);
-    drawButton({x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f}, "Пустой лист", false, COL_WINE_BRIGHT);
+    float nextY = trY + 63.0f;
+    if (world.trailMode == 1) {
+        drawValueInputRow(x, nextY, "Время жизни следа", TextFormat("%.1f с", world.trailDuration),
+                          state.editingField == EditField::TRAIL_DURATION, state.inputBuffer);
+        nextY += 54.0f;
+    }
+
+    drawButton({x, nextY, w, 26.0f}, "Стереть все трассеры", false, COL_WINE_BRIGHT);
+    nextY += 34.0f;
+
+    // Секция Лабораторных стендов
+    DrawLine((int)x, (int)nextY, (int)(x + w), (int)nextY, {64, 54, 50, 255});
+    DrawTextEx(fontBold, "Лабораторные стенды", {x, nextY + 6.0f}, 17, 1.0f, COL_GOLD);
+
+    float labY = nextY + 30.0f;
+    drawButton({x, labY + 0 * 32.0f, w, 28.0f}, "Лаб. 1: Горка (Шар vs Брусок)", false, COL_GOLD);
+    drawButton({x, labY + 1 * 32.0f, w, 28.0f}, "Лаб. 2: Закон Гука и Маятник", false, COL_GOLD);
+    drawButton({x, labY + 2 * 32.0f, w, 28.0f}, "Лаб. 3: Импульс и соударение", false, COL_GOLD);
+    drawButton({x, labY + 3 * 32.0f, w, 28.0f}, "Лаб. 4: Статика и предел трения", false, COL_GOLD);
+
+    drawButton({x, labY + 4 * 32.0f + 4.0f, 130.0f, 27.0f}, "Демо-сцена", false, COL_GOLD);
+    drawButton({x + 138.0f, labY + 4 * 32.0f + 4.0f, 130.0f, 27.0f}, "Пустой лист", false, COL_WINE_BRIGHT);
 }
 
 void Renderer::drawHatchedSupport(const Body& b, int sw, int sh, bool highlighted, bool unlocked) const {
     float hx = b.width * 0.5f;
     float hy = b.height * 0.5f;
-    // Радиус закругления краев в стиле нижнего дока (почти капсула)
     float r = std::min(hy * 0.88f, hx * 0.45f);
     float innerX = std::max(0.0f, hx - r);
     float innerY = std::max(0.0f, hy - r);
@@ -582,7 +830,6 @@ void Renderer::drawHatchedSupport(const Body& b, int sw, int sh, bool highlighte
         { innerX, -innerY}
     };
 
-    // Вспомогательная лямбда для заливки повернутого скругленного прямоугольника
     auto drawRoundedShape = [&](Vector2 offsetPx, Color col) {
         Vector2 cScr = worldToScreen(b.pos, sw, sh);
         cScr.x += offsetPx.x;
@@ -600,38 +847,35 @@ void Renderer::drawHatchedSupport(const Body& b, int sw, int sh, bool highlighte
         }
     };
 
-    // 1. Мягкая тень и матовая база в точном стиле нижнего дока
     drawRoundedShape({2.0f, 4.0f}, {14, 12, 12, 255});
     Color fillCol = unlocked ? Color{52, 28, 34, 255} : Color{34, 29, 28, 255};
     drawRoundedShape({0.0f, 0.0f}, fillCol);
 
-    // 2. Аккуратная диагональная штриховка внутри скругленной капсулы
     auto getMaxYAtX = [&](float x) {
         float ax = std::abs(x);
-        if (ax > hx) return 0.0f;
+        if (ax >= hx) return 0.0f;
         if (ax <= innerX) return hy;
         float dx = ax - innerX;
         return innerY + std::sqrt(std::max(0.0f, r * r - dx * dx));
     };
 
-    Color hatchCol = highlighted ? COL_GOLD : Fade(COL_GOLD_DIM, 0.72f);
-    float step = 0.22f;
+    Color hatchCol = highlighted ? COL_GOLD : Fade(COL_GOLD_DIM, 0.78f);
+    float step = 0.18f;
     float slant = hy * 0.65f;
-    for (float x = -hx + 0.08f; x <= hx - 0.08f; x += step) {
-        float x1 = x - slant;
-        float x2 = x + slant;
-        if (x1 < -hx + 0.03f || x2 > hx - 0.03f) continue;
+    for (float x = -hx - slant + 0.06f; x <= hx + slant - 0.06f; x += step) {
+        float x1 = std::clamp(x - slant, -hx + 0.015f, hx - 0.015f);
+        float x2 = std::clamp(x + slant, -hx + 0.015f, hx - 0.015f);
+        if (x2 - x1 < 0.02f) continue;
 
-        float yLim1 = std::max(0.0f, getMaxYAtX(x1) - 0.025f);
-        float yLim2 = std::max(0.0f, getMaxYAtX(x2) - 0.025f);
-        if (yLim1 <= 0.01f || yLim2 <= 0.01f) continue;
+        float yLim1 = std::max(0.0f, getMaxYAtX(x1) - 0.018f);
+        float yLim2 = std::max(0.0f, getMaxYAtX(x2) - 0.018f);
+        if (yLim1 <= 0.005f && yLim2 <= 0.005f) continue;
 
         Vec2 pBot = b.localToWorld({x1, -yLim1});
         Vec2 pTop = b.localToWorld({x2,  yLim2});
         DrawLineEx(worldToScreen(pBot, sw, sh), worldToScreen(pTop, sw, sh), 1.4f, hatchCol);
     }
 
-    // 3. Гладкая скругленная обводка по периметру
     const int ARC_PTS = 8;
     std::vector<Vector2> perim;
     perim.reserve(ARC_PTS * 4);
@@ -730,30 +974,35 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
 
     BeginScissorMode(0, 0, canvasW, sh);
 
-    // 0. Бесконечная координатная сетка (ровные клетки от пола)
+    // 0. Бесконечная координатная сетка
     drawInfiniteGridAndFloor(world, sw, sh);
 
+    // 0.5. Отрисовка трассеров траекторий (если они включены в настройках)
+    drawTrails(world, state, sw, sh);
+
     // 1. Отрисовка тросов и витых пружин
-    for (const auto& r : world.ropes) {
-        const Body& a = world.bodies[r.idA];
-        Vector2 sA = worldToScreen(a.localToWorld(r.offsetA), sw, sh);
-        Vector2 sB = worldToScreen(world.getRopeEndWorldPos(r), sw, sh);
+    if (!state.hideAllBodies) {
+        for (const auto& r : world.ropes) {
+            const Body& a = world.bodies[r.idA];
+            Vector2 sA = worldToScreen(a.localToWorld(r.offsetA), sw, sh);
+            Vector2 sB = worldToScreen(world.getRopeEndWorldPos(r), sw, sh);
 
-        bool isHighlighted = (r.id == state.hoveredRopeId) || (r.id == state.selectedRopeId);
-        Color ropeCol = isHighlighted ? COL_TEXT_CREAM : ((r.tension > 0.5f) ? COL_GOLD : COL_GOLD_DIM);
+            bool isHighlighted = (r.id == state.hoveredRopeId) || (r.id == state.selectedRopeId);
+            Color ropeCol = isHighlighted ? COL_TEXT_CREAM : ((r.tension > 0.5f) ? COL_GOLD : COL_GOLD_DIM);
 
-        if (r.isSpring && !r.isRigid) {
-            if (!isHighlighted && r.signedExtension() < -0.02f) {
-                ropeCol = {222, 146, 96, 255};
+            if (r.isSpring && !r.isRigid) {
+                if (!isHighlighted && r.signedExtension() < -0.02f) {
+                    ropeCol = {222, 146, 96, 255};
+                }
+                drawSpringCoil(sA, sB, ropeCol, isHighlighted ? 3.0f : 2.2f);
+            } else {
+                DrawLineEx(sA, sB, isHighlighted ? 4.5f : 3.0f, ropeCol);
             }
-            drawSpringCoil(sA, sB, ropeCol, isHighlighted ? 3.0f : 2.2f);
-        } else {
-            DrawLineEx(sA, sB, isHighlighted ? 4.5f : 3.0f, ropeCol);
-        }
 
-        if (r.idB == -1) {
-            DrawCircleV(sB, 6.0f, COL_BG_DARK);
-            DrawCircleLines((int)sB.x, (int)sB.y, 6.0f, isHighlighted ? COL_TEXT_CREAM : COL_GOLD);
+            if (r.idB == -1) {
+                DrawCircleV(sB, 6.0f, COL_BG_DARK);
+                DrawCircleLines((int)sB.x, (int)sB.y, 6.0f, isHighlighted ? COL_TEXT_CREAM : COL_GOLD);
+            }
         }
     }
 
@@ -774,6 +1023,9 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
 
     // 2. Отрисовка тел
     for (const auto& b : world.bodies) {
+        if (!b.isStatic && b.hidden) continue;
+        if (b.isStatic && state.hideAllBodies) continue;
+
         Vector2 scr = worldToScreen(b.pos, sw, sh);
         float bw = b.width * ppm;
         float bh = b.height * ppm;
@@ -819,10 +1071,15 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
 
     // 2.5. Фантом-превью и индикатор рядом с курсором при спавне
     Vector2 m = GetMousePosition();
-    Rectangle dockRect = InputHandler::getDockRect(sh);
-    Rectangle menuRect = InputHandler::getAddMenuRect(sh);
+    Rectangle dockRect   = InputHandler::getDockRect(sh);
+    Rectangle menuRect   = InputHandler::getAddMenuRect(sh);
+    Rectangle chronoRect = InputHandler::getChronoBarRect(sw);
+    Rectangle graphRect  = InputHandler::getGraphRect(state, sw, sh);
+
     bool overUI = (m.x >= canvasW) ||
                   (m.x >= dockRect.x && m.x <= dockRect.x + dockRect.width && m.y >= dockRect.y && m.y <= dockRect.y + dockRect.height) ||
+                  (m.x >= chronoRect.x && m.x <= chronoRect.x + chronoRect.width && m.y >= chronoRect.y && m.y <= chronoRect.y + chronoRect.height) ||
+                  (state.showGraph && m.x >= graphRect.x && m.x <= graphRect.x + graphRect.width && m.y >= graphRect.y && m.y <= graphRect.y + graphRect.height) ||
                   (state.addMenuOpen && m.x >= menuRect.x && m.x <= menuRect.x + menuRect.width && m.y >= menuRect.y && m.y <= menuRect.y + menuRect.height);
 
     bool isCreationTool = (state.activeTool == ToolType::ADD_BLOCK ||
@@ -877,11 +1134,11 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
         DrawTextEx(fontSmall, label, {tag.x + 26.0f, tag.y + (tag.height - ts.y) * 0.5f}, 14, 1.0f, COL_TEXT_CREAM);
     }
 
-    // 3. Векторы сил (внешняя сила тяги F показывается всегда по умолчанию, даже без наведения)
+    // 3. Векторы сил
     const float FORCE_SCALE = 0.9f;
-    if (state.forceViewMode != 2) {
+    if (state.forceViewMode != 2 && !state.hideAllBodies) {
         for (const auto& b : world.bodies) {
-            if (b.isStatic) continue;
+            if (b.isStatic || b.hidden) continue;
 
             Vector2 scr = worldToScreen(b.pos, sw, sh);
             float bw = (b.shape == ShapeType::CIRCLE ? (b.radius * 2.0f) : b.width) * ppm;
@@ -890,7 +1147,6 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
             bool hasAppliedForce = (std::abs(b.appliedForceX) > 0.1f);
             bool isHighlighted = (b.id == state.hoveredBodyId) || (b.id == state.draggedBodyId);
 
-            // Внешняя сила тяги F и ответная сила трения Fтр видны сразу без наведения
             if (hasAppliedForce) {
                 float sign = (b.appliedForceX > 0.0f) ? 1.0f : -1.0f;
                 Vector2 sidePt = {scr.x + sign * bw * 0.5f, scr.y};
@@ -931,40 +1187,48 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
     }
 
     // 4. Векторы натяжения/упругости и карточка связи
-    for (const auto& r : world.ropes) {
-        const Body& a = world.bodies[r.idA];
-        bool bodyHighlighted = (r.idB != -1) && ((r.idB == state.hoveredBodyId) || (r.idB == state.draggedBodyId));
-        bool ropeHighlighted = (r.id == state.hoveredRopeId);
+    if (!state.hideAllBodies) {
+        for (const auto& r : world.ropes) {
+            const Body& a = world.bodies[r.idA];
+            bool bodyHighlighted = (r.idB != -1) && ((r.idB == state.hoveredBodyId) || (r.idB == state.draggedBodyId));
+            bool ropeHighlighted = (r.id == state.hoveredRopeId);
 
-        if (r.idB != -1 && state.forceViewMode != 2 && (state.forceViewMode == 1 || bodyHighlighted || ropeHighlighted) && r.tension > 0.2f) {
-            const Body& b = world.bodies[r.idB];
-            Vector2 attachPt = worldToScreen(b.localToWorld(r.offsetB), sw, sh);
-            float pushSign = (r.isSpring && r.signedExtension() < 0.0f) ? -1.0f : 1.0f;
-            Vector2 endPt = {
-                attachPt.x + r.dir.x * pushSign * r.tension * FORCE_SCALE,
-                attachPt.y - r.dir.y * pushSign * r.tension * FORCE_SCALE
-            };
-            drawVectorArrow(attachPt, endPt, COL_GOLD,
-                            TextFormat(r.isSpring ? "Fупр = %.1f Н" : "T = %.1f Н", r.tension), {10.0f, -8.0f});
-        }
+            if (r.idB != -1 && state.forceViewMode != 2 && (state.forceViewMode == 1 || bodyHighlighted || ropeHighlighted) && r.tension > 0.2f) {
+                const Body& b = world.bodies[r.idB];
+                Vector2 attachPt = worldToScreen(b.localToWorld(r.offsetB), sw, sh);
+                float pushSign = (r.isSpring && r.signedExtension() < 0.0f) ? -1.0f : 1.0f;
+                Vector2 endPt = {
+                    attachPt.x + r.dir.x * pushSign * r.tension * FORCE_SCALE,
+                    attachPt.y - r.dir.y * pushSign * r.tension * FORCE_SCALE
+                };
+                drawVectorArrow(attachPt, endPt, COL_GOLD,
+                                TextFormat(r.isSpring ? "Fупр = %.1f Н" : "T = %.1f Н", r.tension), {10.0f, -8.0f});
+            }
 
-        if (ropeHighlighted) {
-            Vector2 sA = worldToScreen(a.localToWorld(r.offsetA), sw, sh);
-            Vector2 sB = worldToScreen(world.getRopeEndWorldPos(r), sw, sh);
-            Vector2 mid = {(sA.x + sB.x) * 0.5f, (sA.y + sB.y) * 0.5f};
-            drawRopeTooltip(r, mid);
+            if (ropeHighlighted) {
+                Vector2 sA = worldToScreen(a.localToWorld(r.offsetA), sw, sh);
+                Vector2 sB = worldToScreen(world.getRopeEndWorldPos(r), sw, sh);
+                Vector2 mid = {(sA.x + sB.x) * 0.5f, (sA.y + sB.y) * 0.5f};
+                drawRopeTooltip(r, mid);
+            }
         }
     }
 
-    // 5. Левый верхний блок подсказок
+    // 5. Левый верхний блок подсказок: строго 1 бинд = 1 строчка
     float hudY = 18.0f;
     const char* forceModeStr = (state.forceViewMode == 0) ? "[V] - силы (при наведении)"
                              : (state.forceViewMode == 1) ? "[V] - силы (все)"
                                                           : "[V] - силы (скрыты)";
 
-    DrawTextEx(fontMain, state.paused ? "[Пробел] - пауза" : "[Пробел] - симуляция", {20, hudY}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, forceModeStr, {20, hudY + 22}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, "[R] - сброс сцены  |  [ПКМ / Колесо] - камера", {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, state.paused ? "[Пробел] - пауза" : "[Пробел] - симуляция",        {20, hudY},      15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, "[ПКМ / Колесо] - камера",                                        {20, hudY + 22}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, forceModeStr,                                                     {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, "[R] - сброс сцены",                                              {20, hudY + 66}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, state.hideAllBodies ? "[H] - показать тела" : "[H] - скрыть тела", {20, hudY + 88}, 15, 1.0f, COL_TEXT_MUTED);
+
+    // 5.5. Верхняя панель времени и осциллограф
+    drawChronoBar(world, state, sw);
+    drawOscilloscope(world, state, sw, sh);
 
     EndScissorMode();
 

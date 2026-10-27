@@ -4,8 +4,15 @@
 #include <algorithm>
 #include <cmath>
 #include <array>
+#include <vector>
 
 enum class ShapeType { BOX = 0, CIRCLE };
+
+struct TrailPoint {
+    Vec2 pos = {0.0f, 0.0f};
+    float time = 0.0f;   // Время создания точки для стирания по таймеру
+    bool strobe = false; // Засечка каждые 0.10 с
+};
 
 struct Body {
     int id = 0;
@@ -29,16 +36,20 @@ struct Body {
 
     float friction = 0.6f;
     float restitution = 0.1f;
-    float appliedForceX = 0.0f;   // Постоянная внешняя горизонтальная сила F (Н)
+    float appliedForceX = 0.0f;
 
     bool isStatic = false;
     bool supportLocked = true;
     bool canRotate = true;
+    bool hidden = false;
 
     int supportedBy = -1;
     float normalForce = 0.0f;
     float topLoadForce = 0.0f;
     float frictionForce = 0.0f;
+
+    std::vector<TrailPoint> trail;
+    float lastStrobeTime = 0.0f;
 
     Body() = default;
     Body(int id, Vec2 pos, float w, float h, float m, bool isStatic = false)
@@ -46,6 +57,11 @@ struct Body {
     {
         restitution = 0.08f;
         updateMassData();
+    }
+
+    void clearTrail() {
+        trail.clear();
+        lastStrobeTime = 0.0f;
     }
 
     void updateMassData() {

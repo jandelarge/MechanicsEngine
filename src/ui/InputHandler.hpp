@@ -2,6 +2,7 @@
 #include "physics/PhysicsWorld.hpp"
 #include "raylib.h"
 #include <string>
+#include <vector>
 
 enum class ToolType {
     SELECT_MOVE = 0,
@@ -30,12 +31,42 @@ enum class EditField {
     ROPE_STIFFNESS,
     WORLD_GRAVITY,
     WORLD_SUBSTEPS,
-    NEW_ROPE_LENGTH
+    NEW_ROPE_LENGTH,
+    TRAIL_DURATION
+};
+
+struct TelemetrySample {
+    float time = 0.0f;
+    float x = 0.0f;
+    float y = 0.0f;
+    float speed = 0.0f;
+    float angVel = 0.0f;
+    float normalF = 0.0f;
+    float frictionF = 0.0f;
+    float ek = 0.0f;
+    float ep = 0.0f;
+    float etot = 0.0f;
 };
 
 struct AppState {
     bool paused = true;
     int forceViewMode = 0; // 0: при наведении, 1: все, 2: скрыты
+    bool hideAllBodies = false;
+
+    // Контроль времени и пошаговый кадр
+    float timeScale = 1.0f;
+    bool stepOneFrame = false;
+
+    // Перетаскиваемое и изменяемое по размеру окно осциллографа
+    bool showGraph = false;
+    int graphTab = 0;
+    int trackedBodyId = -1;
+    std::vector<TelemetrySample> telemetryHistory;
+    Vector2 graphPos = {-1.0f, -1.0f};
+    Vector2 graphSize = {440.0f, 240.0f};
+    bool isDraggingGraph = false;
+    bool isResizingGraph = false;
+    Vector2 graphDragOffset = {0.0f, 0.0f};
 
     ToolType activeTool = ToolType::SELECT_MOVE;
     bool addMenuOpen = false;
@@ -82,10 +113,20 @@ public:
     static Rectangle getAddMenuRect(int screenH);
     static Rectangle getAddMenuItemRect(int index, int screenH);
 
+    static Rectangle getChronoBarRect(int screenW);
+    static Rectangle getGraphRect(const AppState& state, int screenW, int screenH);
+
+    static int findTargetTelemetryBody(const PhysicsWorld& world, const AppState& state);
+    static void recordTelemetry(const PhysicsWorld& world, AppState& state);
+    static void clearTelemetry(const PhysicsWorld& world, AppState& state);
+    static void toggleGlobalHideBodies(PhysicsWorld& world, AppState& state);
+
     static void update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm);
     static void commitEditField(PhysicsWorld& world, AppState& state);
 
 private:
+    static bool handleChronoBar(PhysicsWorld& world, AppState& state, int screenW);
+    static bool handleGraphWindow(PhysicsWorld& world, AppState& state, int screenW, int screenH);
     static bool handleDock(PhysicsWorld& world, AppState& state, int screenH);
     static void handleInspector(PhysicsWorld& world, AppState& state, int screenW, int screenH);
     static void handleKeyboardInput(PhysicsWorld& world, AppState& state);

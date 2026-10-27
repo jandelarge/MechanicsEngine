@@ -20,6 +20,7 @@ int main() {
 
     AppState state;
     state.paused = true;
+    InputHandler::recordTelemetry(world, state);
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
@@ -29,7 +30,13 @@ int main() {
 
         if (!state.paused) {
             Vec2 targetPos = state.mouseWorldPos + state.dragOffset;
-            world.step(dt, state.draggedBodyId, targetPos, state.draggedFreeRopeId);
+            world.step(dt * state.timeScale, state.draggedBodyId, targetPos, state.draggedFreeRopeId);
+            InputHandler::recordTelemetry(world, state);
+        } else if (state.stepOneFrame) {
+            Vec2 targetPos = state.mouseWorldPos + state.dragOffset;
+            world.step(1.0f / 60.0f, state.draggedBodyId, targetPos, state.draggedFreeRopeId);
+            InputHandler::recordTelemetry(world, state);
+            state.stepOneFrame = false;
         }
 
         renderer.draw(world, state);

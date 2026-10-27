@@ -21,6 +21,9 @@ public:
 
 private:
     void drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int sh) const;
+    void drawTrails(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
+    void drawChronoBar(const PhysicsWorld& world, const AppState& state, int sw) const;
+    void drawOscilloscope(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
     void drawLiquidDock(int sh, const AppState& state) const;
     void drawDockIcon(int index, Rectangle btnRect, bool active, bool paused, Color iconCol) const;
     void drawCreationIcon(int itemIndex, Vector2 center, Color col, bool active) const;

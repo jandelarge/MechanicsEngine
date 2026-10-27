@@ -5,7 +5,7 @@
 
 struct OBBManifold {
     bool hit = false;
-    Vec2 normal = {0.0f, 1.0f}; // Всегда направлен от тела A к телу B
+    Vec2 normal = {0.0f, 1.0f};
     float depth = 0.0f;
     Vec2 points[2];
     float depths[2] = {0.0f, 0.0f};
@@ -403,15 +403,22 @@ void PhysicsWorld::removeRope(int id) {
     updateStaticTelemetry();
 }
 
+void PhysicsWorld::clearAllTrails() {
+    for (auto& b : bodies) {
+        b.clearTrail();
+    }
+}
+
 void PhysicsWorld::clearScene() {
     bodies.clear();
     ropes.clear();
     contacts.clear();
+    simTime = 0.0f;
 }
 
 void PhysicsWorld::setupDefaultScene() {
     clearScene();
-    int anchorId = createBody({-1.0f, 7.3f}, 3.5f, 0.2f, 1.0f, true);
+    int anchorId = createBody({-1.0f, 7.3f}, 3.5f, 0.24f, 1.0f, true);
     float eqStretch = (5.0f * G) / 180.0f;
     float startY = 7.3f - 2.4f - eqStretch - 0.65f;
     int hangingId = createBody({-1.0f, startY}, 1.3f, 1.3f, 5.0f, false);
@@ -428,10 +435,8 @@ void PhysicsWorld::loadLabPreset(int presetId) {
 
     switch (presetId) {
         case 1: {
-            // Лаб. 1: Наклонная плоскость (Качение шара vs Скольжение бруска)
             float tilt = -20.0f * DEG2RAD_VAL;
 
-            // Верхний желоб (для шара)
             int rampTop = createBody({-1.2f, 5.8f}, 7.2f, 0.26f, 1.0f, true);
             bodies[rampTop].angle = tilt;
             bodies[rampTop].friction = 0.20f;
@@ -441,7 +446,6 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             bodies[ballId].friction = 0.20f;
             bodies[ballId].restitution = 0.05f;
 
-            // Нижний желоб (для бруска)
             int rampBot = createBody({-1.2f, 2.6f}, 7.2f, 0.26f, 1.0f, true);
             bodies[rampBot].angle = tilt;
             bodies[rampBot].friction = 0.20f;
@@ -451,30 +455,24 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             bodies[boxId].angle = tilt;
             bodies[boxId].friction = 0.20f;
 
-            // Финишный бортик справа
             int stopper = createBody({4.9f, 1.9f}, 2.8f, 0.26f, 1.0f, true);
             bodies[stopper].angle = 70.0f * DEG2RAD_VAL;
             break;
         }
         case 2: {
-            // Лаб. 2: Гармонические колебания (Закон Гука и Маятник)
             int beam = createBody({0.0f, 7.6f}, 8.5f, 0.26f, 1.0f, true);
 
-            // 1. Мягкая пружина (k = 90 Н/м)
             int b1 = createBody({-3.0f, 3.6f}, 1.1f, 1.1f, 3.0f, false);
             addRope(beam, b1, {-3.0f, -0.13f}, {0.0f, 0.55f}, 2.4f, 90.0f, false, true);
 
-            // 2. Жёсткая пружина (k = 320 Н/м)
             int b2 = createBody({0.0f, 3.6f}, 1.1f, 1.1f, 3.0f, false);
             addRope(beam, b2, {0.0f, -0.13f}, {0.0f, 0.55f}, 2.4f, 320.0f, false, true);
 
-            // 3. Нитяной маятник, отведённый на угол
             int ball = createCircle({4.5f, 5.6f}, 0.48f, 2.5f, false);
             addRope(beam, ball, {2.8f, -0.13f}, {0.0f, 0.0f}, 2.6f, 200.0f, true, false);
             break;
         }
         case 3: {
-            // Лаб. 3: Закон сохранения импульса (Колыбель Ньютона на гладкой дорожке)
             float tilt = -18.0f * DEG2RAD_VAL;
             int ramp = createBody({-4.6f, 1.04f}, 4.2f, 0.26f, 1.0f, true);
             bodies[ramp].angle = tilt;
@@ -495,7 +493,6 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             break;
         }
         case 4: {
-            // Лаб. 4: Порог трения покоя (Нагруженное тело vs Свободное при одинаковой тяге F = 18 Н)
             int leftBase = createBody({-3.2f, groundY + 0.5f}, 1.4f, 1.0f, 2.0f, false);
             bodies[leftBase].friction = 0.5f;
             bodies[leftBase].appliedForceX = 18.0f;
@@ -520,7 +517,11 @@ void PhysicsWorld::loadLabPreset(int presetId) {
 
 void PhysicsWorld::saveSnapshot() {
     snapshot.bodies = bodies;
+    for (auto& b : snapshot.bodies) {
+        b.clearTrail();
+    }
     snapshot.ropes = ropes;
+    snapshot.simTime = 0.0f;
     snapshot.valid = true;
 }
 
@@ -528,9 +529,11 @@ void PhysicsWorld::restoreSnapshot() {
     if (!snapshot.valid) return;
     bodies = snapshot.bodies;
     ropes = snapshot.ropes;
+    simTime = 0.0f;
     for (auto& b : bodies) {
         b.vel = {0.0f, 0.0f};
         b.angVel = 0.0f;
+        b.clearTrail();
     }
     updateStaticTelemetry();
 }
@@ -573,6 +576,16 @@ Vec2 PhysicsWorld::getSnapOffset(int bodyId, const Vec2& worldClick) const {
 }
 
 void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, int draggedFreeRopeId) {
+    if (trailMode > 0 && simTime == 0.0f) {
+        for (auto& b : bodies) {
+            if (!b.isStatic && b.trail.empty()) {
+                b.trail.push_back({b.pos, 0.0f, true});
+                b.lastStrobeTime = 0.0f;
+            }
+        }
+    }
+
+    simTime += dt;
     int steps = std::clamp(substeps, 4, 100);
     float subDt = dt / (float)steps;
 
@@ -762,6 +775,32 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
         ropes[i].tension = frameRopeTensionSum[i] / (float)steps;
     }
 
+    // Обработка трассеров согласно выбранному режиму (0 = Выкл, 1 = По времени, 2 = Оставлять всё)
+    if (trailMode > 0) {
+        for (auto& b : bodies) {
+            if (b.isStatic) continue;
+
+            if (trailMode == 1) {
+                while (!b.trail.empty() && (simTime - b.trail.front().time > trailDuration)) {
+                    b.trail.erase(b.trail.begin());
+                }
+            }
+
+            bool needStrobe = (simTime - b.lastStrobeTime >= 0.10f);
+            bool movedEnough = b.trail.empty() || ((b.pos - b.trail.back().pos).lengthSq() >= 0.0004f);
+
+            if (movedEnough) {
+                if (needStrobe) b.lastStrobeTime = simTime;
+                b.trail.push_back({b.pos, simTime, needStrobe});
+                if (trailMode == 2 && b.trail.size() > 4000) {
+                    b.trail.erase(b.trail.begin());
+                }
+            } else if (needStrobe && !b.trail.empty()) {
+                b.lastStrobeTime = simTime;
+            }
+        }
+    }
+
     if (draggedBodyId >= 0) {
         tryAttachBodyToFreeRopes(draggedBodyId);
     }
@@ -809,7 +848,6 @@ void PhysicsWorld::buildContacts() {
         }
     };
 
-    // 1. Контакты с полом
     for (const auto& b : bodies) {
         if (b.isStatic) continue;
 
@@ -847,7 +885,6 @@ void PhysicsWorld::buildContacts() {
         }
     }
 
-    // 2. Контакты между телами (сортируем снизу вверх)
     std::vector<size_t> order(bodies.size());
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](size_t i, size_t j) {
@@ -986,7 +1023,6 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
             }
         }
 
-        // Решаем контакты (2x2 Block Solver для плоских граней)
         size_t i = 0;
         while (i < contacts.size()) {
             if (i + 1 < contacts.size() &&
@@ -1125,7 +1161,6 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
             if (bodies[i].isStatic || (int)i == pinnedId) grounded[i] = true;
         }
 
-        // 1. Выталкивание из пола
         for (size_t idx : order) {
             Body& b = bodies[idx];
             if (b.isStatic) continue;
@@ -1151,7 +1186,6 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
             }
         }
 
-        // 2. Выталкивание пересекающихся тел снизу вверх
         for (size_t ii = 0; ii < order.size(); ++ii) {
             for (size_t jj = ii + 1; jj < order.size(); ++jj) {
                 Body& a = bodies[order[ii]];
@@ -1200,7 +1234,6 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
             }
         }
 
-        // 3. Ограничение длины нитей и минимального сжатия пружин
         for (auto& r : ropes) {
             if (r.idB == -1) continue;
             Body& a = bodies[r.idA];

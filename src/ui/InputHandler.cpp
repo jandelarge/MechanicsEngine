@@ -1,6 +1,7 @@
 #include "InputHandler.hpp"
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <algorithm>
 
 static const float BASE_PPM = 70.0f;
@@ -15,7 +16,7 @@ static bool CheckInputBoxClick(Vector2 m, float x, float y) {
 }
 
 Rectangle InputHandler::getDockRect(int screenH) {
-    return {20.0f, (float)screenH - 78.0f, 282.0f, 58.0f};
+    return {20.0f, (float)screenH - 78.0f, 382.0f, 58.0f};
 }
 
 Rectangle InputHandler::getDockButtonRect(int index, int screenH) {
@@ -43,6 +44,112 @@ Rectangle InputHandler::getAddMenuItemRect(int index, int screenH) {
     float x = menu.x + 8.0f + index * (itemW + 6.0f);
     float y = menu.y + (menu.height - itemH) * 0.5f;
     return {x, y, itemW, itemH};
+}
+
+Rectangle InputHandler::getChronoBarRect(int screenW) {
+    float canvasW = (float)(screenW - INSPECTOR_WIDTH);
+    float barW = 438.0f;
+    float x = (canvasW - barW) * 0.5f;
+    return {x, 14.0f, barW, 40.0f};
+}
+
+Rectangle InputHandler::getGraphRect(const AppState& state, int screenW, int screenH) {
+    float canvasW = (float)(screenW - INSPECTOR_WIDTH);
+    float gw = std::clamp(state.graphSize.x, 420.0f, std::max(420.0f, canvasW - 24.0f));
+    float gh = std::clamp(state.graphSize.y, 190.0f, std::max(190.0f, (float)screenH - 24.0f));
+
+    float x = (state.graphPos.x < 0.0f) ? (canvasW - gw - 20.0f) : state.graphPos.x;
+    float y = (state.graphPos.y < 0.0f) ? ((float)screenH - gh - 20.0f) : state.graphPos.y;
+
+    x = std::clamp(x, 12.0f, std::max(12.0f, canvasW - gw - 12.0f));
+    y = std::clamp(y, 12.0f, std::max(12.0f, (float)screenH - gh - 12.0f));
+    return {x, y, gw, gh};
+}
+
+void InputHandler::toggleGlobalHideBodies(PhysicsWorld& world, AppState& state) {
+    state.hideAllBodies = !state.hideAllBodies;
+    // Принудительно синхронизируем все тела на сцене с новым глобальным состоянием
+    for (auto& b : world.bodies) {
+        b.hidden = state.hideAllBodies;
+    }
+}
+
+int InputHandler::findTargetTelemetryBody(const PhysicsWorld& world, const AppState& state) {
+    if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
+        if (!world.bodies[state.selectedBodyId].isStatic) {
+            return state.selectedBodyId;
+        }
+    }
+    if (state.trackedBodyId >= 0 && state.trackedBodyId < (int)world.bodies.size()) {
+        if (!world.bodies[state.trackedBodyId].isStatic) {
+            return state.trackedBodyId;
+        }
+    }
+    for (const auto& b : world.bodies) {
+        if (!b.isStatic) return b.id;
+    }
+    return -1;
+}
+
+void InputHandler::recordTelemetry(const PhysicsWorld& world, AppState& state) {
+    int targetId = findTargetTelemetryBody(world, state);
+    if (targetId < 0 || targetId >= (int)world.bodies.size()) {
+        state.trackedBodyId = -1;
+        return;
+    }
+
+    if (state.trackedBodyId != targetId) {
+        state.trackedBodyId = targetId;
+        state.telemetryHistory.clear();
+    }
+
+    const Body& b = world.bodies[targetId];
+    float speed = b.vel.length();
+
+    float minY = b.pos.y - b.radius;
+    if (b.shape == ShapeType::BOX) {
+        auto verts = b.getVertices();
+        minY = std::min({verts[0].y, verts[1].y, verts[2].y, verts[3].y});
+    }
+    float hAboveFloor = minY - world.groundY;
+    if (hAboveFloor < 0.008f) hAboveFloor = 0.0f;
+
+    float ek = 0.5f * b.mass * (speed * speed) + 0.5f * b.inertia * (b.angVel * b.angVel);
+    if (ek < 0.005f) ek = 0.0f;
+
+    float ep = b.mass * world.G * hAboveFloor;
+    for (const auto& r : world.ropes) {
+        if (r.idA == targetId || r.idB == targetId) {
+            ep += r.potentialEnergy();
+        }
+    }
+    if (ep < 0.005f) ep = 0.0f;
+
+    TelemetrySample smp;
+    smp.time = world.simTime;
+    smp.x = b.pos.x;
+    smp.y = b.pos.y;
+    smp.speed = speed;
+    smp.angVel = b.angVel;
+    smp.normalF = b.normalForce;
+    smp.frictionF = b.frictionForce;
+    smp.ek = ek;
+    smp.ep = ep;
+    smp.etot = ek + ep;
+
+    if (!state.telemetryHistory.empty() && std::abs(state.telemetryHistory.back().time - smp.time) < 1e-5f) {
+        state.telemetryHistory.back() = smp;
+    } else {
+        state.telemetryHistory.push_back(smp);
+        if (state.telemetryHistory.size() > 600) {
+            state.telemetryHistory.erase(state.telemetryHistory.begin());
+        }
+    }
+}
+
+void InputHandler::clearTelemetry(const PhysicsWorld& world, AppState& state) {
+    state.telemetryHistory.clear();
+    recordTelemetry(world, state);
 }
 
 void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
@@ -130,10 +237,14 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
             case EditField::NEW_ROPE_LENGTH:
                 state.newRopeDefaultLength = std::clamp(val, 0.3f, 12.0f);
                 break;
+            case EditField::TRAIL_DURATION:
+                world.trailDuration = std::clamp(val, 0.2f, 60.0f);
+                break;
             default:
                 break;
         }
         world.updateStaticTelemetry();
+        if (state.paused) recordTelemetry(world, state);
     }
     state.editingField = EditField::NONE;
     state.inputBuffer.clear();
@@ -143,6 +254,121 @@ static void ActivateInputField(PhysicsWorld& world, AppState& state, EditField f
     InputHandler::commitEditField(world, state);
     state.editingField = field;
     state.inputBuffer.clear();
+}
+
+bool InputHandler::handleChronoBar(PhysicsWorld& world, AppState& state, int screenW) {
+    Vector2 m = GetMousePosition();
+    Rectangle bar = getChronoBarRect(screenW);
+    if (!PointInRect(m, bar)) return false;
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        commitEditField(world, state);
+        float x = bar.x + 8.0f;
+        float y = bar.y + 6.0f;
+        float h = 28.0f;
+
+        // 1. Индикатор времени (104px)
+        x += 110.0f;
+
+        // 2. Кнопка "Сброс t" (68px)
+        if (PointInRect(m, {x, y, 68.0f, h})) {
+            world.simTime = 0.0f;
+            world.clearAllTrails();
+            clearTelemetry(world, state);
+            return true;
+        }
+        x += 80.0f; // 68px кнопка + 12px отступ с разделителем
+
+        // 3. Переключатели скорости времени: 0.25x, 0.5x, 1.0x
+        float scales[3] = {0.25f, 0.5f, 1.0f};
+        for (int i = 0; i < 3; ++i) {
+            if (PointInRect(m, {x, y, 48.0f, h})) {
+                state.timeScale = scales[i];
+                return true;
+            }
+            x += 52.0f;
+        }
+        x += 8.0f; // Разделитель перед кнопкой Шаг
+
+        // 4. Кнопка пошагового кадра ">| Шаг" — самая правая (68px)
+        if (PointInRect(m, {x, y, 68.0f, h})) {
+            if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
+            state.paused = true;
+            state.stepOneFrame = true;
+            return true;
+        }
+    }
+    return true;
+}
+
+bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int screenW, int screenH) {
+    if (!state.showGraph) {
+        state.isDraggingGraph = false;
+        state.isResizingGraph = false;
+        return false;
+    }
+
+    Vector2 m = GetMousePosition();
+    Rectangle gr = getGraphRect(state, screenW, screenH);
+    float canvasW = (float)(screenW - INSPECTOR_WIDTH);
+
+    if (state.isResizingGraph) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            float maxW = std::max(420.0f, canvasW - gr.x - 12.0f);
+            float maxH = std::max(190.0f, (float)screenH - gr.y - 12.0f);
+            state.graphSize.x = std::clamp(m.x - gr.x, 420.0f, std::min(780.0f, maxW));
+            state.graphSize.y = std::clamp(m.y - gr.y, 190.0f, std::min(540.0f, maxH));
+            return true;
+        } else {
+            state.isResizingGraph = false;
+        }
+    }
+
+    if (state.isDraggingGraph) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            state.graphPos.x = std::clamp(m.x - state.graphDragOffset.x, 12.0f, std::max(12.0f, canvasW - gr.width - 12.0f));
+            state.graphPos.y = std::clamp(m.y - state.graphDragOffset.y, 12.0f, std::max(12.0f, (float)screenH - gr.height - 12.0f));
+            return true;
+        } else {
+            state.isDraggingGraph = false;
+        }
+    }
+
+    if (!PointInRect(m, gr)) return false;
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        commitEditField(world, state);
+        state.graphPos = {gr.x, gr.y};
+
+        // 1. Зона ресайза в правом нижнем углу (20x20 px)
+        if (PointInRect(m, {gr.x + gr.width - 20.0f, gr.y + gr.height - 20.0f, 20.0f, 20.0f})) {
+            state.isResizingGraph = true;
+            return true;
+        }
+
+        // 2. Вкладка 1: Энергия (ширина 88px)
+        if (PointInRect(m, {gr.x + gr.width - 262.0f, gr.y + 6.0f, 88.0f, 22.0f})) {
+            state.graphTab = 0;
+            return true;
+        }
+        // 3. Вкладка 2: Скорость/Силы (расширена до 134px)
+        if (PointInRect(m, {gr.x + gr.width - 168.0f, gr.y + 6.0f, 134.0f, 22.0f})) {
+            state.graphTab = 1;
+            return true;
+        }
+        // 4. Кнопка закрытия [X]
+        if (PointInRect(m, {gr.x + gr.width - 28.0f, gr.y + 6.0f, 22.0f, 22.0f})) {
+            state.showGraph = false;
+            state.isDraggingGraph = false;
+            state.isResizingGraph = false;
+            return true;
+        }
+
+        // 5. Захват окна за шапку/рамку для перемещения
+        state.isDraggingGraph = true;
+        state.graphDragOffset = {m.x - gr.x, m.y - gr.y};
+    }
+    return true;
 }
 
 bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH) {
@@ -180,7 +406,7 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
     Rectangle dock = getDockRect(screenH);
     if (!PointInRect(m, dock)) return false;
 
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 7; ++i) {
         if (PointInRect(m, getDockButtonRect(i, screenH))) {
             state.hoveredDockBtn = i;
             break;
@@ -191,7 +417,7 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
         commitEditField(world, state);
 
         if (state.hoveredDockBtn == 0) {
-            if (state.paused) world.saveSnapshot();
+            if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
             state.paused = !state.paused;
         } else if (state.hoveredDockBtn == 1) {
             state.draggedBodyId = -1;
@@ -199,6 +425,8 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
             state.creatingSupportBodyId = -1;
             state.paused = true;
             world.restoreSnapshot();
+            for (auto& b : world.bodies) b.hidden = state.hideAllBodies;
+            clearTelemetry(world, state);
         } else if (state.hoveredDockBtn == 2) {
             state.activeTool = ToolType::SELECT_MOVE;
             state.ropeStartBodyId = -1;
@@ -207,6 +435,13 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
         } else if (state.hoveredDockBtn == 3) {
             state.addMenuOpen = !state.addMenuOpen;
         } else if (state.hoveredDockBtn == 4) {
+            state.showGraph = !state.showGraph;
+            state.addMenuOpen = false;
+        } else if (state.hoveredDockBtn == 5) {
+            // [4] Глазик: глобальное скрытие/показ всех тел
+            toggleGlobalHideBodies(world, state);
+            state.addMenuOpen = false;
+        } else if (state.hoveredDockBtn == 6) {
             state.activeTool = ToolType::DELETE_OBJ;
             state.ropeStartBodyId = -1;
             state.creatingSupportBodyId = -1;
@@ -225,6 +460,19 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
 
     float x = panelX + 16.0f;
     float w = INSPECTOR_WIDTH - 32.0f;
+
+    auto syncGlobalHideFlag = [&]() {
+        bool allDynHidden = false;
+        int dynCount = 0;
+        for (const auto& body : world.bodies) {
+            if (!body.isStatic) {
+                dynCount++;
+                if (!body.hidden) return false;
+            }
+        }
+        allDynHidden = (dynCount > 0);
+        return allDynHidden;
+    };
 
     if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
         Body& b = world.bodies[state.selectedBodyId];
@@ -252,6 +500,7 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 state.selectedBodyId = -1;
                 state.creatingSupportBodyId = -1;
                 world.removeBody(delId);
+                clearTelemetry(world, state);
                 return;
             }
             commitEditField(world, state);
@@ -263,18 +512,28 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
             if (CheckInputBoxClick(m, x, topY + 206)) { ActivateInputField(world, state, EditField::BODY_RESTITUTION); return; }
             if (CheckInputBoxClick(m, x, topY + 260)) { ActivateInputField(world, state, EditField::BODY_FORCE_X); return; }
 
-            if (PointInRect(m, {x, topY + 316, w, 26})) {
+            if (PointInRect(m, {x, topY + 314, 130, 26})) {
                 commitEditField(world, state);
                 b.canRotate = !b.canRotate;
                 if (!b.canRotate) { b.angle = 0.0f; b.angVel = 0.0f; }
                 b.updateMassData();
                 return;
             }
-
-            if (PointInRect(m, {x, topY + 348, w, 26})) {
+            if (PointInRect(m, {x + 138, topY + 314, 130, 26})) {
                 commitEditField(world, state);
                 b.angle = 0.0f;
                 b.angVel = 0.0f;
+                return;
+            }
+            if (PointInRect(m, {x, topY + 346, 130, 26})) {
+                commitEditField(world, state);
+                b.hidden = !b.hidden;
+                state.hideAllBodies = syncGlobalHideFlag();
+                return;
+            }
+            if (PointInRect(m, {x + 138, topY + 346, 130, 26})) {
+                commitEditField(world, state);
+                b.clearTrail();
                 return;
             }
 
@@ -283,6 +542,7 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 int delId = state.selectedBodyId;
                 state.selectedBodyId = -1;
                 world.removeBody(delId);
+                clearTelemetry(world, state);
                 return;
             }
             commitEditField(world, state);
@@ -294,19 +554,29 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
             if (CheckInputBoxClick(m, x, topY + 206)) { ActivateInputField(world, state, EditField::BODY_HEIGHT); return; }
             if (CheckInputBoxClick(m, x, topY + 260)) { ActivateInputField(world, state, EditField::BODY_FORCE_X); return; }
 
-            if (PointInRect(m, {x, topY + 316, w, 26})) {
+            if (PointInRect(m, {x, topY + 314, 130, 26})) {
                 commitEditField(world, state);
                 b.canRotate = !b.canRotate;
                 if (!b.canRotate) { b.angle = 0.0f; b.angVel = 0.0f; }
                 b.updateMassData();
                 return;
             }
-
-            if (PointInRect(m, {x, topY + 348, w, 26})) {
+            if (PointInRect(m, {x + 138, topY + 314, 130, 26})) {
                 commitEditField(world, state);
                 b.angle = 0.0f;
                 b.angVel = 0.0f;
                 world.resolveEditorOverlap(b.id);
+                return;
+            }
+            if (PointInRect(m, {x, topY + 346, 130, 26})) {
+                commitEditField(world, state);
+                b.hidden = !b.hidden;
+                state.hideAllBodies = syncGlobalHideFlag();
+                return;
+            }
+            if (PointInRect(m, {x + 138, topY + 346, 130, 26})) {
+                commitEditField(world, state);
+                b.clearTrail();
                 return;
             }
 
@@ -315,6 +585,7 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 int delId = state.selectedBodyId;
                 state.selectedBodyId = -1;
                 world.removeBody(delId);
+                clearTelemetry(world, state);
                 return;
             }
             commitEditField(world, state);
@@ -365,50 +636,84 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         return;
     }
 
-    // Не выбран ни один объект: Параметры среды + Лабораторные стенды
+    // Не выбран ни один объект: Параметры среды + Трассеры + Лабораторные стенды
     if (CheckInputBoxClick(m, x, topY + 44)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
 
     if (PointInRect(m, {x, topY + 98, 128, 26}))       { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
     if (PointInRect(m, {x + 140, topY + 98, 128, 26})) { commitEditField(world, state); world.G = 10.0f; world.updateStaticTelemetry(); return; }
 
-    if (CheckInputBoxClick(m, x, topY + 134)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
-    if (CheckInputBoxClick(m, x, topY + 188)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
+    if (CheckInputBoxClick(m, x, topY + 132)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
+    if (CheckInputBoxClick(m, x, topY + 186)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
 
-    if (PointInRect(m, {x, topY + 244, w, 28})) {
+    if (PointInRect(m, {x, topY + 242, w, 26})) {
         commitEditField(world, state);
         state.camPos = {-0.8f, 4.3f};
         state.camZoom = 1.0f;
         return;
     }
 
-    // Блок готовых Лабораторных стендов
-    float labY = topY + 314.0f;
+    // Управление трассерами: [Выкл] [По времени] [Все]
+    if (PointInRect(m, {x, topY + 296, 76, 26})) {
+        commitEditField(world, state);
+        world.trailMode = 0;
+        world.clearAllTrails();
+        return;
+    }
+    if (PointInRect(m, {x + 82, topY + 296, 104, 26})) {
+        commitEditField(world, state);
+        world.trailMode = 1;
+        return;
+    }
+    if (PointInRect(m, {x + 192, topY + 296, 76, 26})) {
+        commitEditField(world, state);
+        world.trailMode = 2;
+        return;
+    }
+
+    // Поле времени стирания трассера и кнопка очистки всех трассеров
+    if (CheckInputBoxClick(m, x, topY + 328)) {
+        ActivateInputField(world, state, EditField::TRAIL_DURATION);
+        return;
+    }
+    if (PointInRect(m, {x, topY + 382, w, 26})) {
+        commitEditField(world, state);
+        world.clearAllTrails();
+        return;
+    }
+
+    float labY = topY + 444.0f;
     for (int i = 0; i < 4; ++i) {
-        if (PointInRect(m, {x, labY + i * 34.0f, w, 29.0f})) {
+        if (PointInRect(m, {x, labY + i * 32.0f, w, 27.0f})) {
             commitEditField(world, state);
             world.loadLabPreset(i + 1);
             state.paused = true;
             state.selectedBodyId = -1;
             state.selectedRopeId = -1;
+            state.hideAllBodies = false;
             state.camPos = {0.0f, 4.3f};
             state.camZoom = 1.0f;
-            if (i == 3) state.forceViewMode = 1; // В Лаб. 4 сразу включаем показ всех сил
+            if (i == 3) state.forceViewMode = 1;
+            clearTelemetry(world, state);
             return;
         }
     }
 
-    if (PointInRect(m, {x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
+    if (PointInRect(m, {x, labY + 4 * 32.0f + 4.0f, 130.0f, 26.0f})) {
         commitEditField(world, state);
         world.setupDefaultScene();
         state.paused = true;
+        state.hideAllBodies = false;
         state.camPos = {-0.8f, 4.3f};
         state.camZoom = 1.0f;
+        clearTelemetry(world, state);
         return;
     }
-    if (PointInRect(m, {x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
+    if (PointInRect(m, {x + 138.0f, labY + 4 * 32.0f + 4.0f, 130.0f, 26.0f})) {
         commitEditField(world, state);
         world.clearScene();
         state.paused = true;
+        state.hideAllBodies = false;
+        clearTelemetry(world, state);
         return;
     }
 
@@ -439,7 +744,7 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
     }
 
     if (IsKeyPressed(KEY_SPACE)) {
-        if (state.paused) world.saveSnapshot();
+        if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
         state.paused = !state.paused;
     }
     if (IsKeyPressed(KEY_V)) {
@@ -451,6 +756,11 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
         state.creatingSupportBodyId = -1;
         state.paused = true;
         world.restoreSnapshot();
+        for (auto& b : world.bodies) b.hidden = state.hideAllBodies;
+        clearTelemetry(world, state);
+    }
+    if (IsKeyPressed(KEY_H)) {
+        toggleGlobalHideBodies(world, state);
     }
     if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
         if (state.selectedBodyId >= 0) {
@@ -458,6 +768,7 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
             state.selectedBodyId = -1;
             state.creatingSupportBodyId = -1;
             world.removeBody(id);
+            clearTelemetry(world, state);
         } else if (state.selectedRopeId >= 0) {
             int id = state.selectedRopeId;
             state.selectedRopeId = -1;
@@ -496,6 +807,10 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
         } else if (IsKeyPressed(KEY_TWO)) {
             state.addMenuOpen = true;
         } else if (IsKeyPressed(KEY_THREE)) {
+            state.showGraph = !state.showGraph;
+        } else if (IsKeyPressed(KEY_FOUR)) {
+            toggleGlobalHideBodies(world, state);
+        } else if (IsKeyPressed(KEY_FIVE)) {
             state.activeTool = ToolType::DELETE_OBJ;
             state.ropeStartBodyId = -1;
         } else if (IsKeyPressed(KEY_ESCAPE)) {
@@ -514,12 +829,15 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
     float centerY = screenH * 0.5f;
     float effPpm = BASE_PPM * state.camZoom;
 
-    bool overDock = handleDock(world, state, screenH);
+    bool overGraph  = handleGraphWindow(world, state, screenW, screenH);
+    bool overChrono = !overGraph && handleChronoBar(world, state, screenW);
+    bool overDock   = !overGraph && handleDock(world, state, screenH);
     handleInspector(world, state, screenW, screenH);
     handleKeyboardInput(world, state);
 
     Vector2 mouse = GetMousePosition();
-    bool insideCanvas = (!overDock && mouse.x >= 0 && mouse.x < canvasWidth && mouse.y >= 0 && mouse.y <= screenH);
+    bool insideCanvas = (!overChrono && !overGraph && !overDock &&
+                         mouse.x >= 0 && mouse.x < canvasWidth && mouse.y >= 0 && mouse.y <= screenH);
 
     if (insideCanvas && (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) || IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE))) {
         state.isPanning = true;
@@ -613,6 +931,9 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                         state.selectedBodyId = state.hoveredBodyId;
                         state.selectedRopeId = -1;
                         const Body& hb = world.bodies[state.hoveredBodyId];
+                        if (!hb.isStatic) {
+                            recordTelemetry(world, state);
+                        }
                         if (!hb.isStatic || !hb.supportLocked) {
                             state.draggedBodyId = state.hoveredBodyId;
                             state.dragOffset = hb.pos - state.mouseWorldPos;
@@ -629,26 +950,31 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                 case ToolType::ADD_BLOCK: {
                     Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
                     int id = world.createBody(safePos, 1.0f, 1.0f, 2.0f, false);
+                    world.bodies[id].hidden = state.hideAllBodies;
                     world.tryAttachBodyToFreeRopes(id);
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
                     world.updateStaticTelemetry();
                     world.saveSnapshot();
+                    recordTelemetry(world, state);
                     break;
                 }
                 case ToolType::ADD_CIRCLE: {
                     Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
                     int id = world.createCircle(safePos, 0.5f, 1.5f, false);
+                    world.bodies[id].hidden = state.hideAllBodies;
                     world.tryAttachBodyToFreeRopes(id);
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
                     world.updateStaticTelemetry();
                     world.saveSnapshot();
+                    recordTelemetry(world, state);
                     break;
                 }
                 case ToolType::ADD_SUPPORT: {
                     state.supportStartPos = state.mouseWorldPos;
                     int id = world.createBody(state.mouseWorldPos, 0.5f, 0.24f, 1.0f, true);
+                    world.bodies[id].hidden = state.hideAllBodies;
                     state.creatingSupportBodyId = id;
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
@@ -702,6 +1028,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                         if (state.selectedBodyId == state.hoveredBodyId) state.selectedBodyId = -1;
                         world.removeBody(state.hoveredBodyId);
                         world.saveSnapshot();
+                        clearTelemetry(world, state);
                     } else if (state.hoveredRopeId != -1) {
                         if (state.selectedRopeId == state.hoveredRopeId) state.selectedRopeId = -1;
                         world.removeRope(state.hoveredRopeId);
@@ -749,8 +1076,10 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
             db.pos = state.mouseWorldPos + state.dragOffset;
             db.vel = {0.0f, 0.0f};
             db.angVel = 0.0f;
+            db.clearTrail();
             world.resolveEditorOverlap(db.id);
             world.tryAttachBodyToFreeRopes(db.id);
+            if (state.paused) recordTelemetry(world, state);
         }
     }
 
@@ -777,7 +1106,7 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
             world.resolveEditorOverlap(sb.id);
             if (state.paused) world.saveSnapshot();
         } else if (state.draggedBodyId != -1 || state.draggedFreeRopeId != -1) {
-            if (state.paused) world.saveSnapshot();
+            if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
         }
         state.creatingSupportBodyId = -1;
         state.draggedBodyId = -1;
