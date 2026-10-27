@@ -10,7 +10,6 @@ enum class ShapeType { BOX = 0, CIRCLE };
 
 struct TrailPoint {
     Vec2 pos = {0.0f, 0.0f};
-    float time = 0.0f;   // Время создания точки для стирания по таймеру
     bool strobe = false; // Засечка каждые 0.10 с
 };
 
@@ -41,7 +40,7 @@ struct Body {
     bool isStatic = false;
     bool supportLocked = true;
     bool canRotate = true;
-    bool hidden = false;
+    bool hidden = false;          // Скрыть само тело, оставив его трассер
 
     int supportedBy = -1;
     float normalForce = 0.0f;

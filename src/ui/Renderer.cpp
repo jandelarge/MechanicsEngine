@@ -96,45 +96,30 @@ void Renderer::drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int s
 }
 
 void Renderer::drawTrails(const PhysicsWorld& world, const AppState& state, int sw, int sh) const {
-    if (world.trailMode == 0) return;
-
     for (const auto& b : world.bodies) {
         if (b.isStatic || b.trail.size() < 2) continue;
 
-        bool isBodyHidden = b.hidden;
+        bool isBodyHidden = state.hideAllBodies || b.hidden;
         bool isSelected   = (b.id == state.selectedBodyId) || (b.id == state.hoveredBodyId);
 
-        float baseAlpha = (isBodyHidden || isSelected) ? 0.92f : 0.60f;
-        float thick     = isBodyHidden ? 2.4f : 1.8f;
+        Color lineCol = (isBodyHidden || isSelected) ? Fade(COL_GOLD, 0.90f) : Fade(COL_GOLD, 0.55f);
+        float thick   = isBodyHidden ? 2.4f : 1.8f;
 
         for (size_t i = 1; i < b.trail.size(); ++i) {
-            float alpha = baseAlpha;
-            if (world.trailMode == 1 && world.trailDuration > 0.05f) {
-                float age = world.simTime - b.trail[i].time;
-                float fade = 1.0f - std::clamp(age / world.trailDuration, 0.0f, 1.0f);
-                alpha *= fade;
-            }
-            if (alpha <= 0.02f) continue;
-
             Vector2 p0 = worldToScreen(b.trail[i - 1].pos, sw, sh);
             Vector2 p1 = worldToScreen(b.trail[i].pos, sw, sh);
-            DrawLineEx(p0, p1, thick, Fade(COL_GOLD, alpha));
+            DrawLineEx(p0, p1, thick, lineCol);
         }
 
+        // Стробоскопические засечки каждые 0.10 с
         for (size_t i = 0; i < b.trail.size(); ++i) {
             if (b.trail[i].strobe) {
-                float alpha = 1.0f;
-                if (world.trailMode == 1 && world.trailDuration > 0.05f) {
-                    float age = world.simTime - b.trail[i].time;
-                    alpha = 1.0f - std::clamp(age / world.trailDuration, 0.0f, 1.0f);
-                }
-                if (alpha <= 0.05f) continue;
-
                 Vector2 pt = worldToScreen(b.trail[i].pos, sw, sh);
-                DrawCircleV(pt, isBodyHidden ? 3.6f : 2.8f, Fade(isBodyHidden ? COL_TEXT_CREAM : COL_GOLD, alpha));
+                DrawCircleV(pt, isBodyHidden ? 3.6f : 2.8f, isBodyHidden ? COL_TEXT_CREAM : COL_GOLD);
             }
         }
 
+        // Если само тело скрыто, отмечаем его текущее положение маркером-прицелом на конце трассера
         if (isBodyHidden) {
             Vector2 cur = worldToScreen(b.pos, sw, sh);
             DrawCircleV(cur, 5.0f, COL_WINE_BRIGHT);
@@ -154,7 +139,7 @@ void Renderer::drawChronoBar(const PhysicsWorld& world, const AppState& state, i
     float y = bar.y + 6.0f;
     float h = 28.0f;
 
-    // 1. Секундомер t = 0.00 с
+    // 1. Электронный секундомер t = 0.00 с
     Rectangle timeBox = {x, y, 104.0f, h};
     DrawRectangleRounded(timeBox, 0.3f, 6, {24, 21, 20, 255});
     DrawRectangleRoundedLinesEx(timeBox, 0.3f, 6, 1.0f, {68, 58, 54, 255});
@@ -168,11 +153,15 @@ void Renderer::drawChronoBar(const PhysicsWorld& world, const AppState& state, i
     drawButton({x, y, 68.0f, h}, "Сброс t", false, COL_GOLD);
     x += 74.0f;
 
-    // Разделитель 1
+    // 3. Пошаговый кадр >| Шаг
+    drawButton({x, y, 68.0f, h}, ">| Шаг", false, COL_GOLD);
+    x += 74.0f;
+
+    // Разделитель
     DrawLineEx({x, bar.y + 9.0f}, {x, bar.y + bar.height - 9.0f}, 1.5f, Fade(COL_GOLD, 0.25f));
     x += 6.0f;
 
-    // 3. Переключатели скорости времени Slow-Mo
+    // 4. Переключатели скорости времени Slow-Mo
     float scales[3] = {0.25f, 0.5f, 1.0f};
     const char* sLabels[3] = {"0.25x", "0.5x", "1.0x"};
     for (int i = 0; i < 3; ++i) {
@@ -180,17 +169,9 @@ void Renderer::drawChronoBar(const PhysicsWorld& world, const AppState& state, i
         drawButton({x, y, 48.0f, h}, sLabels[i], active, COL_GOLD);
         x += 52.0f;
     }
-
-    // Разделитель 2
-    x += 2.0f;
-    DrawLineEx({x, bar.y + 9.0f}, {x, bar.y + bar.height - 9.0f}, 1.5f, Fade(COL_GOLD, 0.25f));
-    x += 6.0f;
-
-    // 4. Кнопка пошагового кадра >| Шаг (самая правая)
-    drawButton({x, y, 68.0f, h}, ">| Шаг", false, COL_GOLD);
 }
 
-void Renderer::drawOscilloscope(const PhysicsWorld& /*world*/, const AppState& state, int sw, int sh) const {
+void Renderer::drawOscilloscope(const PhysicsWorld& world, const AppState& state, int sw, int sh) const {
     if (!state.showGraph) return;
 
     Rectangle gr = InputHandler::getGraphRect(state, sw, sh);
@@ -207,13 +188,15 @@ void Renderer::drawOscilloscope(const PhysicsWorld& /*world*/, const AppState& s
         }
     }
 
-    // Чистая подпись "Осциллограф" без номера
-    DrawTextEx(fontBold, "Осциллограф", {gr.x + 22.0f, gr.y + 9.0f}, 16, 1.0f, COL_GOLD);
+    const char* targetTitle = (state.trackedBodyId >= 0 && state.trackedBodyId < (int)world.bodies.size())
+                            ? TextFormat("Осциллограф (#%d)", state.trackedBodyId + 1)
+                            : "Осциллограф";
+    DrawTextEx(fontBold, targetTitle, {gr.x + 22.0f, gr.y + 9.0f}, 16, 1.0f, COL_GOLD);
 
-    // Расширенные кнопки вкладок: "Энергия" (86px) и "Скорость / Силы" (132px)
-    drawButton({gr.x + gr.width - 254.0f, gr.y + 6.0f, 86.0f,  23.0f}, "Энергия",         state.graphTab == 0, COL_GOLD);
-    drawButton({gr.x + gr.width - 164.0f, gr.y + 6.0f, 132.0f, 23.0f}, "Скорость / Силы", state.graphTab == 1, COL_GOLD);
-    drawButton({gr.x + gr.width - 26.0f,  gr.y + 6.0f, 20.0f,  23.0f}, "X",               false, COL_WINE_BRIGHT);
+    // Вкладки и кнопка закрытия привязаны к правому краю окна, чтобы корректно двигаться при ресайзе
+    drawButton({gr.x + gr.width - 226.0f, gr.y + 7.0f, 82.0f, 22.0f}, "Энергия", state.graphTab == 0, COL_GOLD);
+    drawButton({gr.x + gr.width - 140.0f, gr.y + 7.0f, 108.0f, 22.0f}, "Скорость/Силы", state.graphTab == 1, COL_GOLD);
+    drawButton({gr.x + gr.width - 26.0f,  gr.y + 7.0f, 20.0f, 22.0f}, "X", false, COL_WINE_BRIGHT);
 
     Rectangle plot = {gr.x + 12.0f, gr.y + 40.0f, gr.width - 24.0f, gr.height - 76.0f};
     DrawRectangleRec(plot, {22, 19, 18, 255});
@@ -282,7 +265,7 @@ void Renderer::drawOscilloscope(const PhysicsWorld& /*world*/, const AppState& s
         DrawTextEx(fontSmall, TextFormat("Fтр: %.1f Н", cur.frictionF), {gr.x + 14.0f + colStep * 2, legY}, 14, 1.0f, {188, 122, 214, 255});
     }
 
-    // Маркер ресайза в правом нижнем углу
+    // Уголок-маркер изменения размера окна в правом нижнем углу
     Color gripCol = state.isResizingGraph ? COL_GOLD : COL_GOLD_DIM;
     float rx = gr.x + gr.width - 4.0f;
     float ry = gr.y + gr.height - 4.0f;
@@ -431,7 +414,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
     float cy = r.y + r.height * 0.5f;
 
     switch (index) {
-        case 0: {
+        case 0: { // Пуск / Пауза
             if (paused) {
                 DrawTriangle({cx - 5.0f, cy - 8.0f}, {cx - 5.0f, cy + 8.0f}, {cx + 8.0f, cy}, col);
             } else {
@@ -440,7 +423,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             }
             break;
         }
-        case 1: {
+        case 1: { // Сброс
             DrawRing({cx, cy}, 6.4f, 8.8f, 42.0f, 312.0f, 28, col);
             Vector2 tip       = {cx + 8.6f, cy - 2.4f};
             Vector2 outerBase = {cx + 7.2f, cy - 9.4f};
@@ -448,7 +431,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             DrawTriangle(tip, outerBase, innerBase, col);
             break;
         }
-        case 2: {
+        case 2: { // [1] Курсор
             Vector2 p1 = {cx - 6.0f, cy - 10.0f};
             Vector2 p2 = {cx - 6.0f, cy + 7.0f};
             Vector2 p3 = {cx + 6.0f, cy + 1.0f};
@@ -456,12 +439,12 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             DrawLineEx({cx - 2.0f, cy + 2.0f}, {cx + 3.0f, cy + 9.0f}, 2.5f, col);
             break;
         }
-        case 3: {
+        case 3: { // [2] Создать [+]
             DrawLineEx({cx - 8.5f, cy}, {cx + 8.5f, cy}, 2.6f, col);
             DrawLineEx({cx, cy - 8.5f}, {cx, cy + 8.5f}, 2.6f, col);
             break;
         }
-        case 4: {
+        case 4: { // [3] Осциллограф
             DrawRectangleRoundedLinesEx({cx - 9.5f, cy - 7.5f, 19.0f, 15.0f}, 0.25f, 4, 1.6f, col);
             Vector2 wPts[5] = {
                 {cx - 6.5f, cy + 1.0f},
@@ -475,7 +458,7 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             }
             break;
         }
-        case 5: {
+        case 5: { // [4] Глазик (открытый / перечеркнутый при active = hideAllBodies)
             Vector2 topArc[7], botArc[7];
             for (int k = 0; k <= 6; ++k) {
                 float t = (float)k / 6.0f;
@@ -490,12 +473,13 @@ void Renderer::drawDockIcon(int index, Rectangle r, bool active, bool paused, Co
             }
             DrawCircleV({cx, cy}, 2.7f, col);
 
+            // Если тела скрыты (active == true), перечеркиваем глазик диагональной линией
             if (active) {
                 DrawLineEx({cx - 8.5f, cy + 7.5f}, {cx + 8.5f, cy - 7.5f}, 2.3f, col);
             }
             break;
         }
-        case 6: {
+        case 6: { // [5] Мусорка (Удалить)
             DrawLineEx({cx - 8.0f, cy - 6.0f}, {cx + 8.0f, cy - 6.0f}, 2.0f, col);
             DrawLineEx({cx - 3.0f, cy - 8.5f}, {cx + 3.0f, cy - 8.5f}, 2.0f, col);
             DrawRectangleLinesEx({cx - 6.5f, cy - 5.0f, 13.0f, 14.0f}, 1.8f, col);
@@ -536,7 +520,7 @@ void Renderer::drawLiquidDock(int sh, const AppState& state) const {
         "Курсор [1]",
         activeCreateName,
         "Осциллограф [3]",
-        state.hideAllBodies ? "Показать все тела [4 / H]" : "Скрыть все тела [4 / H]",
+        state.hideAllBodies ? "Показать тела [4 / H]" : "Скрыть тела (трассеры) [4 / H]",
         "Удалить [5]"
     };
 
@@ -671,7 +655,7 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
 
             drawButton({x, topY + 314, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
             drawButton({x + 138, topY + 314, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
-            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (показать)" : "Скрыть это тело", b.hidden, COL_GOLD);
+            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (виден трассер)" : "Скрыть тело (оставить трассер)", b.hidden, COL_GOLD);
 
             float ty = topY + 380;
             DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
@@ -702,7 +686,7 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
 
             drawButton({x, topY + 314, 130, 26}, b.canRotate ? "Вращение: Вкл" : "Вращение: Выкл", b.canRotate, COL_GOLD);
             drawButton({x + 138, topY + 314, 130, 26}, "Угол 0\xC2\xB0", false, COL_GOLD);
-            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (показать)" : "Скрыть это тело", b.hidden, COL_GOLD);
+            drawButton({x, topY + 346, w, 26}, b.hidden ? "Тело скрыто (виден трассер)" : "Скрыть тело (оставить трассер)", b.hidden, COL_GOLD);
 
             float ty = topY + 380;
             DrawLine((int)x, (int)ty, (int)(x + w), (int)ty, {64, 54, 50, 255});
@@ -760,55 +744,34 @@ void Renderer::drawInspector(const PhysicsWorld& world, const AppState& state, i
         return;
     }
 
-    // Параметры среды + Настройки трассеров + Лабораторные стенды
-    DrawTextEx(fontBold, "Параметры среды", {x, topY + 10}, 18, 1.0f, COL_GOLD);
+    DrawTextEx(fontBold, "Параметры среды", {x, topY + 12}, 18, 1.0f, COL_GOLD);
 
-    drawValueInputRow(x, topY + 38, "Ускорение g", TextFormat("%.2f м/с\xC2\xB2", world.G),
+    drawValueInputRow(x, topY + 44, "Ускорение g", TextFormat("%.2f м/с\xC2\xB2", world.G),
                       state.editingField == EditField::WORLD_GRAVITY, state.inputBuffer);
 
-    drawButton({x, topY + 90, 128, 25}, "g = 9.81", std::abs(world.G - 9.81f) < 0.02f, COL_GOLD);
-    drawButton({x + 140, topY + 90, 128, 25}, "g = 10.0", std::abs(world.G - 10.0f) < 0.02f, COL_GOLD);
+    drawButton({x, topY + 98, 128, 26}, "g = 9.81", std::abs(world.G - 9.81f) < 0.02f, COL_GOLD);
+    drawButton({x + 140, topY + 98, 128, 26}, "g = 10.0", std::abs(world.G - 10.0f) < 0.02f, COL_GOLD);
 
-    drawValueInputRow(x, topY + 122, "Точность расчета", TextFormat("%d шаг.", world.substeps),
+    drawValueInputRow(x, topY + 134, "Точность расчета", TextFormat("%d шаг.", world.substeps),
                       state.editingField == EditField::WORLD_SUBSTEPS, state.inputBuffer);
 
-    drawValueInputRow(x, topY + 174, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
+    drawValueInputRow(x, topY + 188, "Длина новой связи L0", TextFormat("%.2f м", state.newRopeDefaultLength),
                       state.editingField == EditField::NEW_ROPE_LENGTH, state.inputBuffer);
 
-    drawButton({x, topY + 228, w, 26}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
+    drawButton({x, topY + 244, w, 28}, TextFormat("Центрировать камеру (%.0f%%)", state.camZoom * 100.0f), false, COL_GOLD);
 
-    // Секция настройки трассеров (Motion Trails)
-    float trY = topY + 262.0f;
-    DrawLine((int)x, (int)trY, (int)(x + w), (int)trY, {64, 54, 50, 255});
-    DrawTextEx(fontBold, "Трассеры траекторий", {x, trY + 6.0f}, 17, 1.0f, COL_GOLD);
+    float sepY = topY + 282.0f;
+    DrawLine((int)x, (int)sepY, (int)(x + w), (int)sepY, {64, 54, 50, 255});
+    DrawTextEx(fontBold, "Лабораторные стенды", {x, sepY + 8.0f}, 17, 1.0f, COL_GOLD);
 
-    const char* trailModeTxt = (world.trailMode == 0) ? "Трассеры: Выкл (по умолч.)"
-                             : (world.trailMode == 1) ? "Трассеры: По времени (стирать)"
-                                                      : "Трассеры: Оставлять всё";
-    drawButton({x, trY + 30.0f, w, 27.0f}, trailModeTxt, world.trailMode != 0, COL_GOLD);
+    float labY = topY + 314.0f;
+    drawButton({x, labY + 0 * 34.0f, w, 29.0f}, "Лаб. 1: Горка (Шар vs Брусок)", false, COL_GOLD);
+    drawButton({x, labY + 1 * 34.0f, w, 29.0f}, "Лаб. 2: Закон Гука и Маятник", false, COL_GOLD);
+    drawButton({x, labY + 2 * 34.0f, w, 29.0f}, "Лаб. 3: Импульс и соударение", false, COL_GOLD);
+    drawButton({x, labY + 3 * 34.0f, w, 29.0f}, "Лаб. 4: Статика и предел трения", false, COL_GOLD);
 
-    float nextY = trY + 63.0f;
-    if (world.trailMode == 1) {
-        drawValueInputRow(x, nextY, "Время жизни следа", TextFormat("%.1f с", world.trailDuration),
-                          state.editingField == EditField::TRAIL_DURATION, state.inputBuffer);
-        nextY += 54.0f;
-    }
-
-    drawButton({x, nextY, w, 26.0f}, "Стереть все трассеры", false, COL_WINE_BRIGHT);
-    nextY += 34.0f;
-
-    // Секция Лабораторных стендов
-    DrawLine((int)x, (int)nextY, (int)(x + w), (int)nextY, {64, 54, 50, 255});
-    DrawTextEx(fontBold, "Лабораторные стенды", {x, nextY + 6.0f}, 17, 1.0f, COL_GOLD);
-
-    float labY = nextY + 30.0f;
-    drawButton({x, labY + 0 * 32.0f, w, 28.0f}, "Лаб. 1: Горка (Шар vs Брусок)", false, COL_GOLD);
-    drawButton({x, labY + 1 * 32.0f, w, 28.0f}, "Лаб. 2: Закон Гука и Маятник", false, COL_GOLD);
-    drawButton({x, labY + 2 * 32.0f, w, 28.0f}, "Лаб. 3: Импульс и соударение", false, COL_GOLD);
-    drawButton({x, labY + 3 * 32.0f, w, 28.0f}, "Лаб. 4: Статика и предел трения", false, COL_GOLD);
-
-    drawButton({x, labY + 4 * 32.0f + 4.0f, 130.0f, 27.0f}, "Демо-сцена", false, COL_GOLD);
-    drawButton({x + 138.0f, labY + 4 * 32.0f + 4.0f, 130.0f, 27.0f}, "Пустой лист", false, COL_WINE_BRIGHT);
+    drawButton({x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f}, "Демо-сцена", false, COL_GOLD);
+    drawButton({x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f}, "Пустой лист", false, COL_WINE_BRIGHT);
 }
 
 void Renderer::drawHatchedSupport(const Body& b, int sw, int sh, bool highlighted, bool unlocked) const {
@@ -977,10 +940,10 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
     // 0. Бесконечная координатная сетка
     drawInfiniteGridAndFloor(world, sw, sh);
 
-    // 0.5. Отрисовка трассеров траекторий (если они включены в настройках)
+    // 0.5. Отрисовка трассеров траекторий (остаются видимыми даже когда тела скрыты)
     drawTrails(world, state, sw, sh);
 
-    // 1. Отрисовка тросов и витых пружин
+    // 1. Отрисовка тросов и витых пружин (если тела не скрыты)
     if (!state.hideAllBodies) {
         for (const auto& r : world.ropes) {
             const Body& a = world.bodies[r.idA];
@@ -1021,9 +984,9 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
         DrawTextEx(fontMain, TextFormat("L0 = %.2f м", dragLen), {sB.x + 12, sB.y - 10}, 15, 1.0f, COL_GOLD);
     }
 
-    // 2. Отрисовка тел
+    // 2. Отрисовка тел (пропускаем скрытые тела, оставляя их трассеры)
     for (const auto& b : world.bodies) {
-        if (!b.isStatic && b.hidden) continue;
+        if (!b.isStatic && (state.hideAllBodies || b.hidden)) continue;
         if (b.isStatic && state.hideAllBodies) continue;
 
         Vector2 scr = worldToScreen(b.pos, sw, sh);
@@ -1220,13 +1183,13 @@ void Renderer::draw(const PhysicsWorld& world, const AppState& state) {
                              : (state.forceViewMode == 1) ? "[V] - силы (все)"
                                                           : "[V] - силы (скрыты)";
 
-    DrawTextEx(fontMain, state.paused ? "[Пробел] - пауза" : "[Пробел] - симуляция",        {20, hudY},      15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, "[ПКМ / Колесо] - камера",                                        {20, hudY + 22}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, forceModeStr,                                                     {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
-    DrawTextEx(fontMain, "[R] - сброс сцены",                                              {20, hudY + 66}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, state.paused ? "[Пробел] - пауза" : "[Пробел] - симуляция", {20, hudY},      15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, "[ПКМ / Колесо] - камера",                                 {20, hudY + 22}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, forceModeStr,                                              {20, hudY + 44}, 15, 1.0f, COL_TEXT_MUTED);
+    DrawTextEx(fontMain, "[R] - сброс сцены",                                       {20, hudY + 66}, 15, 1.0f, COL_TEXT_MUTED);
     DrawTextEx(fontMain, state.hideAllBodies ? "[H] - показать тела" : "[H] - скрыть тела", {20, hudY + 88}, 15, 1.0f, COL_TEXT_MUTED);
 
-    // 5.5. Верхняя панель времени и осциллограф
+    // 5.5. Верхняя панель времени и изменяемый по размеру осциллограф
     drawChronoBar(world, state, sw);
     drawOscilloscope(world, state, sw, sh);
 

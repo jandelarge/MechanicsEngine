@@ -16,6 +16,7 @@ static bool CheckInputBoxClick(Vector2 m, float x, float y) {
 }
 
 Rectangle InputHandler::getDockRect(int screenH) {
+    // 7 кнопок: Пуск, Сброс | [1] Курсор, [2] Создать, [3] Осциллограф, [4] Глазик, [5] Мусорка
     return {20.0f, (float)screenH - 78.0f, 382.0f, 58.0f};
 }
 
@@ -48,14 +49,15 @@ Rectangle InputHandler::getAddMenuItemRect(int index, int screenH) {
 
 Rectangle InputHandler::getChronoBarRect(int screenW) {
     float canvasW = (float)(screenW - INSPECTOR_WIDTH);
-    float barW = 438.0f;
+    float barW = 432.0f;
+    // Строго по центру рабочей области холста
     float x = (canvasW - barW) * 0.5f;
     return {x, 14.0f, barW, 40.0f};
 }
 
 Rectangle InputHandler::getGraphRect(const AppState& state, int screenW, int screenH) {
     float canvasW = (float)(screenW - INSPECTOR_WIDTH);
-    float gw = std::clamp(state.graphSize.x, 420.0f, std::max(420.0f, canvasW - 24.0f));
+    float gw = std::clamp(state.graphSize.x, 380.0f, std::max(380.0f, canvasW - 24.0f));
     float gh = std::clamp(state.graphSize.y, 190.0f, std::max(190.0f, (float)screenH - 24.0f));
 
     float x = (state.graphPos.x < 0.0f) ? (canvasW - gw - 20.0f) : state.graphPos.x;
@@ -64,14 +66,6 @@ Rectangle InputHandler::getGraphRect(const AppState& state, int screenW, int scr
     x = std::clamp(x, 12.0f, std::max(12.0f, canvasW - gw - 12.0f));
     y = std::clamp(y, 12.0f, std::max(12.0f, (float)screenH - gh - 12.0f));
     return {x, y, gw, gh};
-}
-
-void InputHandler::toggleGlobalHideBodies(PhysicsWorld& world, AppState& state) {
-    state.hideAllBodies = !state.hideAllBodies;
-    // Принудительно синхронизируем все тела на сцене с новым глобальным состоянием
-    for (auto& b : world.bodies) {
-        b.hidden = state.hideAllBodies;
-    }
 }
 
 int InputHandler::findTargetTelemetryBody(const PhysicsWorld& world, const AppState& state) {
@@ -106,6 +100,7 @@ void InputHandler::recordTelemetry(const PhysicsWorld& world, AppState& state) {
     const Body& b = world.bodies[targetId];
     float speed = b.vel.length();
 
+    // Точная нижняя точка тела и фильтрация микро-зазора коллизии (чтобы на полу Ep был строго 0.0 Дж)
     float minY = b.pos.y - b.radius;
     if (b.shape == ShapeType::BOX) {
         auto verts = b.getVertices();
@@ -237,9 +232,6 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
             case EditField::NEW_ROPE_LENGTH:
                 state.newRopeDefaultLength = std::clamp(val, 0.3f, 12.0f);
                 break;
-            case EditField::TRAIL_DURATION:
-                world.trailDuration = std::clamp(val, 0.2f, 60.0f);
-                break;
             default:
                 break;
         }
@@ -270,16 +262,25 @@ bool InputHandler::handleChronoBar(PhysicsWorld& world, AppState& state, int scr
         // 1. Индикатор времени (104px)
         x += 110.0f;
 
-        // 2. Кнопка "Сброс t" (68px)
+        // 2. Кнопка сброса времени и трассеров "Сброс t" (68px)
         if (PointInRect(m, {x, y, 68.0f, h})) {
             world.simTime = 0.0f;
-            world.clearAllTrails();
+            for (auto& b : world.bodies) b.clearTrail();
             clearTelemetry(world, state);
+            return true;
+        }
+        x += 74.0f;
+
+        // 3. Кнопка пошагового кадра ">| Шаг" (68px)
+        if (PointInRect(m, {x, y, 68.0f, h})) {
+            if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
+            state.paused = true;
+            state.stepOneFrame = true;
             return true;
         }
         x += 80.0f; // 68px кнопка + 12px отступ с разделителем
 
-        // 3. Переключатели скорости времени: 0.25x, 0.5x, 1.0x
+        // 4. Переключатели скорости времени: 0.25x, 0.5x, 1.0x
         float scales[3] = {0.25f, 0.5f, 1.0f};
         for (int i = 0; i < 3; ++i) {
             if (PointInRect(m, {x, y, 48.0f, h})) {
@@ -287,15 +288,6 @@ bool InputHandler::handleChronoBar(PhysicsWorld& world, AppState& state, int scr
                 return true;
             }
             x += 52.0f;
-        }
-        x += 8.0f; // Разделитель перед кнопкой Шаг
-
-        // 4. Кнопка пошагового кадра ">| Шаг" — самая правая (68px)
-        if (PointInRect(m, {x, y, 68.0f, h})) {
-            if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
-            state.paused = true;
-            state.stepOneFrame = true;
-            return true;
         }
     }
     return true;
@@ -312,11 +304,12 @@ bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int s
     Rectangle gr = getGraphRect(state, screenW, screenH);
     float canvasW = (float)(screenW - INSPECTOR_WIDTH);
 
+    // Изменение размера окна осциллографа за правый нижний угол
     if (state.isResizingGraph) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            float maxW = std::max(420.0f, canvasW - gr.x - 12.0f);
+            float maxW = std::max(380.0f, canvasW - gr.x - 12.0f);
             float maxH = std::max(190.0f, (float)screenH - gr.y - 12.0f);
-            state.graphSize.x = std::clamp(m.x - gr.x, 420.0f, std::min(780.0f, maxW));
+            state.graphSize.x = std::clamp(m.x - gr.x, 380.0f, std::min(780.0f, maxW));
             state.graphSize.y = std::clamp(m.y - gr.y, 190.0f, std::min(540.0f, maxH));
             return true;
         } else {
@@ -324,6 +317,7 @@ bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int s
         }
     }
 
+    // Перетаскивание окна осциллографа
     if (state.isDraggingGraph) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             state.graphPos.x = std::clamp(m.x - state.graphDragOffset.x, 12.0f, std::max(12.0f, canvasW - gr.width - 12.0f));
@@ -346,18 +340,18 @@ bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int s
             return true;
         }
 
-        // 2. Вкладка 1: Энергия (ширина 88px)
-        if (PointInRect(m, {gr.x + gr.width - 262.0f, gr.y + 6.0f, 88.0f, 22.0f})) {
+        // 2. Вкладка 1: Энергия
+        if (PointInRect(m, {gr.x + gr.width - 226.0f, gr.y + 7.0f, 82.0f, 22.0f})) {
             state.graphTab = 0;
             return true;
         }
-        // 3. Вкладка 2: Скорость/Силы (расширена до 134px)
-        if (PointInRect(m, {gr.x + gr.width - 168.0f, gr.y + 6.0f, 134.0f, 22.0f})) {
+        // 3. Вкладка 2: Скорость / Силы
+        if (PointInRect(m, {gr.x + gr.width - 140.0f, gr.y + 7.0f, 108.0f, 22.0f})) {
             state.graphTab = 1;
             return true;
         }
         // 4. Кнопка закрытия [X]
-        if (PointInRect(m, {gr.x + gr.width - 28.0f, gr.y + 6.0f, 22.0f, 22.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 26.0f, gr.y + 7.0f, 20.0f, 22.0f})) {
             state.showGraph = false;
             state.isDraggingGraph = false;
             state.isResizingGraph = false;
@@ -425,7 +419,6 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
             state.creatingSupportBodyId = -1;
             state.paused = true;
             world.restoreSnapshot();
-            for (auto& b : world.bodies) b.hidden = state.hideAllBodies;
             clearTelemetry(world, state);
         } else if (state.hoveredDockBtn == 2) {
             state.activeTool = ToolType::SELECT_MOVE;
@@ -435,13 +428,15 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
         } else if (state.hoveredDockBtn == 3) {
             state.addMenuOpen = !state.addMenuOpen;
         } else if (state.hoveredDockBtn == 4) {
+            // [3] Осциллограф
             state.showGraph = !state.showGraph;
             state.addMenuOpen = false;
         } else if (state.hoveredDockBtn == 5) {
-            // [4] Глазик: глобальное скрытие/показ всех тел
-            toggleGlobalHideBodies(world, state);
+            // [4] Глазик: Скрыть / Показать все тела (оставив трассеры)
+            state.hideAllBodies = !state.hideAllBodies;
             state.addMenuOpen = false;
         } else if (state.hoveredDockBtn == 6) {
+            // [5] Удалить (мусорка)
             state.activeTool = ToolType::DELETE_OBJ;
             state.ropeStartBodyId = -1;
             state.creatingSupportBodyId = -1;
@@ -460,19 +455,6 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
 
     float x = panelX + 16.0f;
     float w = INSPECTOR_WIDTH - 32.0f;
-
-    auto syncGlobalHideFlag = [&]() {
-        bool allDynHidden = false;
-        int dynCount = 0;
-        for (const auto& body : world.bodies) {
-            if (!body.isStatic) {
-                dynCount++;
-                if (!body.hidden) return false;
-            }
-        }
-        allDynHidden = (dynCount > 0);
-        return allDynHidden;
-    };
 
     if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
         Body& b = world.bodies[state.selectedBodyId];
@@ -525,15 +507,10 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 b.angVel = 0.0f;
                 return;
             }
-            if (PointInRect(m, {x, topY + 346, 130, 26})) {
+            // Индивидуальное скрытие тела (с сохранением его трассера)
+            if (PointInRect(m, {x, topY + 346, w, 26})) {
                 commitEditField(world, state);
                 b.hidden = !b.hidden;
-                state.hideAllBodies = syncGlobalHideFlag();
-                return;
-            }
-            if (PointInRect(m, {x + 138, topY + 346, 130, 26})) {
-                commitEditField(world, state);
-                b.clearTrail();
                 return;
             }
 
@@ -568,15 +545,10 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 world.resolveEditorOverlap(b.id);
                 return;
             }
-            if (PointInRect(m, {x, topY + 346, 130, 26})) {
+            // Индивидуальное скрытие тела (с сохранением его трассера)
+            if (PointInRect(m, {x, topY + 346, w, 26})) {
                 commitEditField(world, state);
                 b.hidden = !b.hidden;
-                state.hideAllBodies = syncGlobalHideFlag();
-                return;
-            }
-            if (PointInRect(m, {x + 138, topY + 346, 130, 26})) {
-                commitEditField(world, state);
-                b.clearTrail();
                 return;
             }
 
@@ -636,60 +608,30 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         return;
     }
 
-    // Не выбран ни один объект: Параметры среды + Трассеры + Лабораторные стенды
+    // Не выбран ни один объект: Параметры среды + Лабораторные стенды
     if (CheckInputBoxClick(m, x, topY + 44)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
 
     if (PointInRect(m, {x, topY + 98, 128, 26}))       { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
     if (PointInRect(m, {x + 140, topY + 98, 128, 26})) { commitEditField(world, state); world.G = 10.0f; world.updateStaticTelemetry(); return; }
 
-    if (CheckInputBoxClick(m, x, topY + 132)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
-    if (CheckInputBoxClick(m, x, topY + 186)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
+    if (CheckInputBoxClick(m, x, topY + 134)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
+    if (CheckInputBoxClick(m, x, topY + 188)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
 
-    if (PointInRect(m, {x, topY + 242, w, 26})) {
+    if (PointInRect(m, {x, topY + 244, w, 28})) {
         commitEditField(world, state);
         state.camPos = {-0.8f, 4.3f};
         state.camZoom = 1.0f;
         return;
     }
 
-    // Управление трассерами: [Выкл] [По времени] [Все]
-    if (PointInRect(m, {x, topY + 296, 76, 26})) {
-        commitEditField(world, state);
-        world.trailMode = 0;
-        world.clearAllTrails();
-        return;
-    }
-    if (PointInRect(m, {x + 82, topY + 296, 104, 26})) {
-        commitEditField(world, state);
-        world.trailMode = 1;
-        return;
-    }
-    if (PointInRect(m, {x + 192, topY + 296, 76, 26})) {
-        commitEditField(world, state);
-        world.trailMode = 2;
-        return;
-    }
-
-    // Поле времени стирания трассера и кнопка очистки всех трассеров
-    if (CheckInputBoxClick(m, x, topY + 328)) {
-        ActivateInputField(world, state, EditField::TRAIL_DURATION);
-        return;
-    }
-    if (PointInRect(m, {x, topY + 382, w, 26})) {
-        commitEditField(world, state);
-        world.clearAllTrails();
-        return;
-    }
-
-    float labY = topY + 444.0f;
+    float labY = topY + 314.0f;
     for (int i = 0; i < 4; ++i) {
-        if (PointInRect(m, {x, labY + i * 32.0f, w, 27.0f})) {
+        if (PointInRect(m, {x, labY + i * 34.0f, w, 29.0f})) {
             commitEditField(world, state);
             world.loadLabPreset(i + 1);
             state.paused = true;
             state.selectedBodyId = -1;
             state.selectedRopeId = -1;
-            state.hideAllBodies = false;
             state.camPos = {0.0f, 4.3f};
             state.camZoom = 1.0f;
             if (i == 3) state.forceViewMode = 1;
@@ -698,21 +640,19 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         }
     }
 
-    if (PointInRect(m, {x, labY + 4 * 32.0f + 4.0f, 130.0f, 26.0f})) {
+    if (PointInRect(m, {x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
         commitEditField(world, state);
         world.setupDefaultScene();
         state.paused = true;
-        state.hideAllBodies = false;
         state.camPos = {-0.8f, 4.3f};
         state.camZoom = 1.0f;
         clearTelemetry(world, state);
         return;
     }
-    if (PointInRect(m, {x + 138.0f, labY + 4 * 32.0f + 4.0f, 130.0f, 26.0f})) {
+    if (PointInRect(m, {x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
         commitEditField(world, state);
         world.clearScene();
         state.paused = true;
-        state.hideAllBodies = false;
         clearTelemetry(world, state);
         return;
     }
@@ -756,11 +696,10 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
         state.creatingSupportBodyId = -1;
         state.paused = true;
         world.restoreSnapshot();
-        for (auto& b : world.bodies) b.hidden = state.hideAllBodies;
         clearTelemetry(world, state);
     }
     if (IsKeyPressed(KEY_H)) {
-        toggleGlobalHideBodies(world, state);
+        state.hideAllBodies = !state.hideAllBodies;
     }
     if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
         if (state.selectedBodyId >= 0) {
@@ -801,6 +740,7 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
             state.addMenuOpen = false;
         }
     } else {
+        // Шорткаты нижнего дока: [1] Курсор, [2] Создать, [3] Осциллограф, [4] Глазик, [5] Удалить
         if (IsKeyPressed(KEY_ONE)) {
             state.activeTool = ToolType::SELECT_MOVE;
             state.ropeStartBodyId = -1;
@@ -809,7 +749,7 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
         } else if (IsKeyPressed(KEY_THREE)) {
             state.showGraph = !state.showGraph;
         } else if (IsKeyPressed(KEY_FOUR)) {
-            toggleGlobalHideBodies(world, state);
+            state.hideAllBodies = !state.hideAllBodies;
         } else if (IsKeyPressed(KEY_FIVE)) {
             state.activeTool = ToolType::DELETE_OBJ;
             state.ropeStartBodyId = -1;
@@ -950,7 +890,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                 case ToolType::ADD_BLOCK: {
                     Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
                     int id = world.createBody(safePos, 1.0f, 1.0f, 2.0f, false);
-                    world.bodies[id].hidden = state.hideAllBodies;
                     world.tryAttachBodyToFreeRopes(id);
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
@@ -962,7 +901,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                 case ToolType::ADD_CIRCLE: {
                     Vec2 safePos = world.findSafeSpawnPos(state.mouseWorldPos, 1.0f, 1.0f);
                     int id = world.createCircle(safePos, 0.5f, 1.5f, false);
-                    world.bodies[id].hidden = state.hideAllBodies;
                     world.tryAttachBodyToFreeRopes(id);
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;
@@ -974,7 +912,6 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                 case ToolType::ADD_SUPPORT: {
                     state.supportStartPos = state.mouseWorldPos;
                     int id = world.createBody(state.mouseWorldPos, 0.5f, 0.24f, 1.0f, true);
-                    world.bodies[id].hidden = state.hideAllBodies;
                     state.creatingSupportBodyId = id;
                     state.selectedBodyId = id;
                     state.selectedRopeId = -1;

@@ -31,8 +31,7 @@ enum class EditField {
     ROPE_STIFFNESS,
     WORLD_GRAVITY,
     WORLD_SUBSTEPS,
-    NEW_ROPE_LENGTH,
-    TRAIL_DURATION
+    NEW_ROPE_LENGTH
 };
 
 struct TelemetrySample {
@@ -51,7 +50,7 @@ struct TelemetrySample {
 struct AppState {
     bool paused = true;
     int forceViewMode = 0; // 0: при наведении, 1: все, 2: скрыты
-    bool hideAllBodies = false;
+    bool hideAllBodies = false; // Глобальное скрытие тел (остаются только трассеры)
 
     // Контроль времени и пошаговый кадр
     float timeScale = 1.0f;
@@ -63,7 +62,7 @@ struct AppState {
     int trackedBodyId = -1;
     std::vector<TelemetrySample> telemetryHistory;
     Vector2 graphPos = {-1.0f, -1.0f};
-    Vector2 graphSize = {440.0f, 240.0f};
+    Vector2 graphSize = {420.0f, 240.0f};
     bool isDraggingGraph = false;
     bool isResizingGraph = false;
     Vector2 graphDragOffset = {0.0f, 0.0f};
@@ -119,7 +118,6 @@ public:
     static int findTargetTelemetryBody(const PhysicsWorld& world, const AppState& state);
     static void recordTelemetry(const PhysicsWorld& world, AppState& state);
     static void clearTelemetry(const PhysicsWorld& world, AppState& state);
-    static void toggleGlobalHideBodies(PhysicsWorld& world, AppState& state);
 
     static void update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm);
     static void commitEditField(PhysicsWorld& world, AppState& state);
