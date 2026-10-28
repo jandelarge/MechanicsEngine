@@ -10,8 +10,8 @@ enum class ShapeType { BOX = 0, CIRCLE };
 
 struct TrailPoint {
     Vec2 pos = {0.0f, 0.0f};
-    bool strobe = false; // Засечка каждые 0.10 с (обязательно вторым полем!)
-    float time = 0.0f;   // Время рождения точки (третьим полем!)
+    bool strobe = false;
+    float time = 0.0f;
 };
 
 struct Body {
@@ -23,6 +23,7 @@ struct Body {
 
     Vec2 pos = {0.0f, 0.0f};
     Vec2 vel = {0.0f, 0.0f};
+    Vec2 spawnPos = {0.0f, 0.0f};
 
     float angle = 0.0f;
     float angVel = 0.0f;
@@ -49,13 +50,14 @@ struct Body {
     float normalForce = 0.0f;
     float topLoadForce = 0.0f;
     float frictionForce = 0.0f;
+    Vec2 contactNormal = {0.0f, 1.0f};
 
     std::vector<TrailPoint> trail;
     float lastStrobeTime = 0.0f;
 
     Body() = default;
     Body(int id, Vec2 pos, float w, float h, float m, bool isStatic = false)
-        : id(id), pos(pos), width(w), height(h), mass(m), isStatic(isStatic)
+        : id(id), pos(pos), spawnPos(pos), width(w), height(h), mass(m), isStatic(isStatic)
     {
         restitution = 0.08f;
         updateMassData();
@@ -115,6 +117,28 @@ struct Body {
             pos + ux + uy,
             pos - ux + uy
         };
+    }
+
+    void computeAABB(Vec2& minPt, Vec2& maxPt, float margin = 0.0f) const {
+        if (shape == ShapeType::CIRCLE) {
+            float r = radius + margin;
+            minPt = {pos.x - r, pos.y - r};
+            maxPt = {pos.x + r, pos.y + r};
+            return;
+        }
+        auto v = getVertices();
+        minPt = v[0];
+        maxPt = v[0];
+        for (int i = 1; i < 4; ++i) {
+            if (v[i].x < minPt.x) minPt.x = v[i].x;
+            if (v[i].y < minPt.y) minPt.y = v[i].y;
+            if (v[i].x > maxPt.x) maxPt.x = v[i].x;
+            if (v[i].y > maxPt.y) maxPt.y = v[i].y;
+        }
+        minPt.x -= margin;
+        minPt.y -= margin;
+        maxPt.x += margin;
+        maxPt.y += margin;
     }
 
     Vec2 localToWorld(const Vec2& localOffset) const {

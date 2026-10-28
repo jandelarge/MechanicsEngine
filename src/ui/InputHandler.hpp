@@ -4,6 +4,15 @@
 #include <string>
 #include <vector>
 
+enum class AppScreen {
+    MAIN_MENU = 0,
+    STUDY_HUB,
+    SETTINGS,
+    ABOUT,
+    SANDBOX,
+    STUDY_LAB
+};
+
 enum class ToolType {
     SELECT_MOVE = 0,
     ADD_BLOCK,
@@ -11,6 +20,7 @@ enum class ToolType {
     ADD_SUPPORT,
     ADD_ROPE,
     ADD_SPRING,
+    ADD_PULLEY,
     DELETE_OBJ
 };
 
@@ -47,24 +57,31 @@ struct TelemetrySample {
     float ek = 0.0f;
     float ep = 0.0f;
     float etot = 0.0f;
+    float theoryVal = 0.0f;
+    float simVal = 0.0f;
+    float errorPct = 0.0f;
 };
 
 struct AppState {
-    bool paused = true;
-    int forceViewMode = 0; // 0: при наведении, 1: все, 2: скрыты
-    bool hideAllBodies = false; // Глобальное скрытие тел (остаются только трассеры)
+    AppScreen screen = AppScreen::MAIN_MENU;
+    AppScreen prevScreen = AppScreen::MAIN_MENU;
+    bool shouldExit = false;
 
-    // Контроль времени и пошаговый кадр
+    bool paused = true;
+    int forceViewMode = 0;
+    bool hideAllBodies = false;
+    bool showCenterOfMass = false;
+    bool showProfiler = false;
+
     float timeScale = 1.0f;
     bool stepOneFrame = false;
 
-    // Перетаскиваемое и изменяемое по размеру окно осциллографа
     bool showGraph = false;
     int graphTab = 0;
     int trackedBodyId = -1;
     std::vector<TelemetrySample> telemetryHistory;
     Vector2 graphPos = {-1.0f, -1.0f};
-    Vector2 graphSize = {420.0f, 240.0f};
+    Vector2 graphSize = {480.0f, 260.0f};
     bool isDraggingGraph = false;
     bool isResizingGraph = false;
     Vector2 graphDragOffset = {0.0f, 0.0f};
@@ -72,7 +89,6 @@ struct AppState {
     ToolType activeTool = ToolType::SELECT_MOVE;
     bool addMenuOpen = false;
 
-    // Независимая камера бесконечного полотна
     Vec2 camPos = {-0.8f, 4.3f};
     float camZoom = 1.0f;
     bool isPanning = false;
@@ -102,6 +118,9 @@ struct AppState {
 
     EditField editingField = EditField::NONE;
     std::string inputBuffer = "";
+
+    std::string statusMessage = "";
+    float statusTimer = 0.0f;
 };
 
 class InputHandler {
@@ -120,11 +139,14 @@ public:
     static int findTargetTelemetryBody(const PhysicsWorld& world, const AppState& state);
     static void recordTelemetry(const PhysicsWorld& world, AppState& state);
     static void clearTelemetry(const PhysicsWorld& world, AppState& state);
+    static bool exportTelemetryCSV(const AppState& state, const std::string& filename);
+    static void showStatus(AppState& state, const std::string& msg, float duration = 3.0f);
 
     static void update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float ppm);
     static void commitEditField(PhysicsWorld& world, AppState& state);
 
 private:
+    static void handleMenuScreens(PhysicsWorld& world, AppState& state, int screenW, int screenH);
     static bool handleChronoBar(PhysicsWorld& world, AppState& state, int screenW);
     static bool handleGraphWindow(PhysicsWorld& world, AppState& state, int screenW, int screenH);
     static bool handleDock(PhysicsWorld& world, AppState& state, int screenH);

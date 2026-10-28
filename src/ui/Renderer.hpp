@@ -12,6 +12,7 @@ public:
     Font fontSmall{};
     Font fontMain{};
     Font fontBold{};
+    Font fontTitle{};
 
     void init();
     void unload();
@@ -20,8 +21,16 @@ public:
     Vector2 worldToScreen(Vec2 wPos, int sw, int sh) const;
 
 private:
+    void drawMainMenu(int sw, int sh) const;
+    void drawStudyHub(const PhysicsWorld& world, int sw, int sh) const;
+    void drawSettingsScreen(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
+    void drawAboutScreen(int sw, int sh) const;
+
     void drawInfiniteGridAndFloor(const PhysicsWorld& world, int sw, int sh) const;
     void drawTrails(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
+    void drawPulleys(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
+    void drawCenterOfMass(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
+    void drawProfilerOverlay(const PhysicsWorld& world, const AppState& state) const;
     void drawChronoBar(const PhysicsWorld& world, const AppState& state, int sw) const;
     void drawOscilloscope(const PhysicsWorld& world, const AppState& state, int sw, int sh) const;
     void drawLiquidDock(int sh, const AppState& state) const;

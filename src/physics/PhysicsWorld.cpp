@@ -2,6 +2,9 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <chrono>
+#include <fstream>
+#include <sstream>
 
 struct OBBManifold {
     bool hit = false;
@@ -11,6 +14,14 @@ struct OBBManifold {
     float depths[2] = {0.0f, 0.0f};
     int pointCount = 0;
 };
+
+static bool CheckAABBOverlap(const Body& a, const Body& b, float margin) {
+    Vec2 minA, maxA, minB, maxB;
+    a.computeAABB(minA, maxA, margin);
+    b.computeAABB(minB, maxB, margin);
+    return (maxA.x >= minB.x && minA.x <= maxB.x &&
+            maxA.y >= minB.y && minA.y <= maxB.y);
+}
 
 static void ProjectOBB(const Body& b, const Vec2& axis, float& minP, float& maxP) {
     auto verts = b.getVertices();
@@ -242,6 +253,7 @@ int PhysicsWorld::createCircle(Vec2 pos, float radius, float mass, bool isStatic
     b.id = (int)bodies.size();
     b.shape = ShapeType::CIRCLE;
     b.pos = pos;
+    b.spawnPos = pos;
     b.radius = radius;
     b.width = radius * 2.0f;
     b.height = radius * 2.0f;
@@ -278,6 +290,21 @@ int PhysicsWorld::addFreeRope(int idA, Vec2 offA, Vec2 endWorldPos, float length
 
     ropes.push_back(r);
     return id;
+}
+
+int PhysicsWorld::addPulley(int idA, int idB, Vec2 offA, Vec2 offB, Vec2 wheelPos, float radius, float totalLen) {
+    if (idA == idB || idA < 0 || idB < 0) return -1;
+    PulleyLink p;
+    p.id = (int)pulleys.size();
+    p.idA = idA;
+    p.idB = idB;
+    p.offsetA = offA;
+    p.offsetB = offB;
+    p.wheelPos = wheelPos;
+    p.radius = radius;
+    p.totalLength = totalLen;
+    pulleys.push_back(p);
+    return p.id;
 }
 
 Vec2 PhysicsWorld::getRopeEndWorldPos(const RopeLink& r) const {
@@ -389,6 +416,10 @@ void PhysicsWorld::removeBody(int id) {
         return r.idA == id || r.idB == id;
     }), ropes.end());
 
+    pulleys.erase(std::remove_if(pulleys.begin(), pulleys.end(), [&](const PulleyLink& p) {
+        return p.idA == id || p.idB == id;
+    }), pulleys.end());
+
     bodies.erase(bodies.begin() + id);
 
     for (int i = 0; i < (int)bodies.size(); ++i) bodies[i].id = i;
@@ -396,6 +427,11 @@ void PhysicsWorld::removeBody(int id) {
         ropes[i].id = i;
         if (ropes[i].idA > id) ropes[i].idA--;
         if (ropes[i].idB > id) ropes[i].idB--;
+    }
+    for (int i = 0; i < (int)pulleys.size(); ++i) {
+        pulleys[i].id = i;
+        if (pulleys[i].idA > id) pulleys[i].idA--;
+        if (pulleys[i].idB > id) pulleys[i].idB--;
     }
     updateStaticTelemetry();
 }
@@ -407,15 +443,29 @@ void PhysicsWorld::removeRope(int id) {
     updateStaticTelemetry();
 }
 
+void PhysicsWorld::removePulley(int id) {
+    if (id < 0 || id >= (int)pulleys.size()) return;
+    pulleys.erase(pulleys.begin() + id);
+    for (int i = 0; i < (int)pulleys.size(); ++i) pulleys[i].id = i;
+    updateStaticTelemetry();
+}
+
+void PhysicsWorld::clearAllTrails() {
+    for (auto& b : bodies) b.clearTrail();
+}
+
 void PhysicsWorld::clearScene() {
     bodies.clear();
     ropes.clear();
+    pulleys.clear();
     contacts.clear();
     simTime = 0.0f;
+    activePreset = 0;
 }
 
 void PhysicsWorld::setupDefaultScene() {
     clearScene();
+    activePreset = 0;
     int anchorId = createBody({-1.0f, 7.3f}, 3.5f, 0.24f, 1.0f, true);
     float eqStretch = (5.0f * G) / 180.0f;
     float startY = 7.3f - 2.4f - eqStretch - 0.65f;
@@ -429,6 +479,9 @@ void PhysicsWorld::setupDefaultScene() {
 
 void PhysicsWorld::loadLabPreset(int presetId) {
     clearScene();
+    activePreset = presetId;
+    airResistance = false;
+    integratorType = 0;
     const float DEG2RAD_VAL = 0.0174532925f;
 
     switch (presetId) {
@@ -442,7 +495,7 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             Vec2 topStart = bodies[rampTop].localToWorld({-2.8f, 0.13f + 0.45f});
             int ballId = createCircle(topStart, 0.45f, 2.0f, false);
             bodies[ballId].friction = 0.20f;
-            bodies[ballId].restitution = 0.05f;
+            bodies[ballId].restitution = 0.02f;
 
             int rampBot = createBody({-1.2f, 2.6f}, 7.2f, 0.26f, 1.0f, true);
             bodies[rampBot].angle = tilt;
@@ -452,6 +505,7 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             int boxId = createBody(botStart, 0.9f, 0.9f, 2.0f, false);
             bodies[boxId].angle = tilt;
             bodies[boxId].friction = 0.20f;
+            bodies[boxId].restitution = 0.0f;
 
             int stopper = createBody({4.9f, 1.9f}, 2.8f, 0.26f, 1.0f, true);
             bodies[stopper].angle = 70.0f * DEG2RAD_VAL;
@@ -459,14 +513,29 @@ void PhysicsWorld::loadLabPreset(int presetId) {
         }
         case 2: {
             int beam = createBody({0.0f, 7.6f}, 8.5f, 0.26f, 1.0f, true);
+            float anchorY = 7.6f - 0.13f;
+            float L0 = 2.0f;
+            float amp = 0.30f;
 
-            int b1 = createBody({-3.0f, 3.6f}, 1.1f, 1.1f, 3.0f, false);
-            addRope(beam, b1, {-3.0f, -0.13f}, {0.0f, 0.55f}, 2.4f, 90.0f, false, true);
+            float m1 = 3.0f, k1 = 80.0f;
+            float eq1 = (m1 * G) / k1;
+            float y1 = anchorY - (L0 + eq1 + amp) - 0.55f;
+            int b1 = createBody({-3.0f, y1}, 1.1f, 1.1f, m1, false);
+            bodies[b1].canRotate = false;
+            bodies[b1].updateMassData();
+            int r1 = addRope(beam, b1, {-3.0f, -0.13f}, {0.0f, 0.55f}, L0, k1, false, true);
+            ropes[r1].damping = 0.0f;
 
-            int b2 = createBody({0.0f, 3.6f}, 1.1f, 1.1f, 3.0f, false);
-            addRope(beam, b2, {0.0f, -0.13f}, {0.0f, 0.55f}, 2.4f, 320.0f, false, true);
+            float m2 = 3.0f, k2 = 200.0f;
+            float eq2 = (m2 * G) / k2;
+            float y2 = anchorY - (L0 + eq2 + amp) - 0.55f;
+            int b2 = createBody({0.0f, y2}, 1.1f, 1.1f, m2, false);
+            bodies[b2].canRotate = false;
+            bodies[b2].updateMassData();
+            int r2 = addRope(beam, b2, {0.0f, -0.13f}, {0.0f, 0.55f}, L0, k2, false, true);
+            ropes[r2].damping = 0.0f;
 
-            int ball = createCircle({4.5f, 5.6f}, 0.48f, 2.5f, false);
+            int ball = createCircle({4.3f, 5.4f}, 0.48f, 2.5f, false);
             addRope(beam, ball, {2.8f, -0.13f}, {0.0f, 0.0f}, 2.6f, 200.0f, true, false);
             break;
         }
@@ -481,12 +550,14 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             bodies[striker].restitution = 0.99f;
             bodies[striker].friction = 0.0f;
             bodies[striker].canRotate = false;
+            bodies[striker].updateMassData();
 
             for (int i = 0; i < 4; ++i) {
                 int id = createCircle({-1.2f + i * 1.015f, groundY + 0.5f}, 0.5f, 2.0f, false);
                 bodies[id].restitution = 0.99f;
                 bodies[id].friction = 0.0f;
                 bodies[id].canRotate = false;
+                bodies[id].updateMassData();
             }
             break;
         }
@@ -503,22 +574,80 @@ void PhysicsWorld::loadLabPreset(int presetId) {
             bodies[rightSingle].appliedForceX = 18.0f;
             break;
         }
+        case 5: {
+            createBody({0.0f, 7.8f}, 5.0f, 0.26f, 1.0f, true);
+
+            Vec2 wheelCenter = {0.0f, 6.7f};
+            float wheelR = 0.85f;
+
+            int leftId  = createBody({wheelCenter.x - wheelR, 4.5f}, 1.0f, 1.0f, 3.2f, false);
+            bodies[leftId].canRotate = false;
+            bodies[leftId].updateMassData();
+
+            int rightId = createBody({wheelCenter.x + wheelR, 2.5f}, 1.0f, 1.0f, 2.0f, false);
+            bodies[rightId].canRotate = false;
+            bodies[rightId].updateMassData();
+
+            float lenA = wheelCenter.y - (4.5f + 0.5f);
+            float lenB = wheelCenter.y - (2.5f + 0.5f);
+            addPulley(leftId, rightId, {0.0f, 0.5f}, {0.0f, 0.5f}, wheelCenter, wheelR, lenA + lenB);
+            break;
+        }
+        case 6: {
+            airResistance = true;
+            int beam = createBody({0.0f, 7.6f}, 6.0f, 0.26f, 1.0f, true);
+            float m = 3.0f, k = 120.0f, L0 = 2.0f;
+            float eq = (m * G) / k;
+            float yStart = (7.6f - 0.13f) - (L0 + eq + 0.42f) - 0.55f;
+            int b = createBody({0.0f, yStart}, 1.2f, 1.1f, m, false);
+            bodies[b].canRotate = false;
+            bodies[b].updateMassData();
+            int r = addRope(beam, b, {0.0f, -0.13f}, {0.0f, 0.55f}, L0, k, false, true);
+            ropes[r].damping = 6.5f;
+            break;
+        }
+        case 7: {
+            int bLight = createCircle({-2.0f, 6.8f}, 0.42f, 1.0f, false);
+            bodies[bLight].restitution = 0.45f;
+            bodies[bLight].trailMode = 2;
+
+            int bHeavy = createCircle({2.0f, 6.8f}, 0.62f, 8.0f, false);
+            bodies[bHeavy].restitution = 0.45f;
+            bodies[bHeavy].trailMode = 2;
+            break;
+        }
+        case 8: {
+            int beam = createBody({0.0f, 7.6f}, 8.0f, 0.26f, 1.0f, true);
+            int p1 = createCircle({-3.1f, 4.9f}, 0.48f, 2.5f, false);
+            int p2 = createCircle({ 2.2f, 4.6f}, 0.48f, 2.5f, false);
+            bodies[p1].canRotate = false; bodies[p1].updateMassData();
+            bodies[p2].canRotate = false; bodies[p2].updateMassData();
+
+            addRope(beam, p1, {-2.2f, -0.13f}, {0.0f, 0.0f}, 2.87f, 200.0f, true, false);
+            addRope(beam, p2, { 2.2f, -0.13f}, {0.0f, 0.0f}, 2.87f, 200.0f, true, false);
+            int cSpr = addRope(p1, p2, {0.0f, 0.0f}, {0.0f, 0.0f}, 4.4f, 35.0f, false, true);
+            ropes[cSpr].damping = 0.0f;
+            break;
+        }
         default:
             setupDefaultScene();
             return;
     }
 
     resolveEditorOverlap(-1);
+    for (auto& b : bodies) b.spawnPos = b.pos;
     updateStaticTelemetry();
     saveSnapshot();
 }
 
 void PhysicsWorld::saveSnapshot() {
+    for (auto& b : bodies) b.spawnPos = b.pos;
     snapshot.bodies = bodies;
     for (auto& b : snapshot.bodies) {
         b.clearTrail();
     }
     snapshot.ropes = ropes;
+    snapshot.pulleys = pulleys;
     snapshot.simTime = 0.0f;
     snapshot.valid = true;
 }
@@ -527,10 +656,12 @@ void PhysicsWorld::restoreSnapshot() {
     if (!snapshot.valid) return;
     bodies = snapshot.bodies;
     ropes = snapshot.ropes;
+    pulleys = snapshot.pulleys;
     simTime = 0.0f;
     for (auto& b : bodies) {
         b.vel = {0.0f, 0.0f};
         b.angVel = 0.0f;
+        b.spawnPos = b.pos;
         b.clearTrail();
     }
     updateStaticTelemetry();
@@ -574,8 +705,11 @@ Vec2 PhysicsWorld::getSnapOffset(int bodyId, const Vec2& worldClick) const {
 }
 
 void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, int draggedFreeRopeId) {
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     if (simTime == 0.0f) {
         for (auto& b : bodies) {
+            b.spawnPos = b.pos;
             if (!b.isStatic && b.trailMode != 0 && b.trail.empty()) {
                 b.trail.push_back({b.pos, true, 0.0f});
                 b.lastStrobeTime = 0.0f;
@@ -585,15 +719,28 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
     simTime += dt;
     int steps = std::clamp(substeps, 4, 100);
+    if (integratorType == 1) {
+        steps = 4;
+    }
     float subDt = dt / (float)steps;
 
     std::vector<float> frameNormalImp(bodies.size(), 0.0f);
     std::vector<float> frameTopImp(bodies.size(), 0.0f);
     std::vector<float> frameFrictionImp(bodies.size(), 0.0f);
+    std::vector<Vec2>  frameNormalDir(bodies.size(), {0.0f, 0.0f});
     std::vector<float> frameRopeTensionSum(ropes.size(), 0.0f);
+    std::vector<float> framePulleyTensionSum(pulleys.size(), 0.0f);
 
     for (int s = 0; s < steps; ++s) {
-        // 1. Упругие нити и пружины
+        std::vector<Vec2> explicitOldVel(bodies.size(), {0.0f, 0.0f});
+        std::vector<float> explicitOldAngVel(bodies.size(), 0.0f);
+        if (integratorType == 1) {
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                explicitOldVel[i] = bodies[i].vel;
+                explicitOldAngVel[i] = bodies[i].angVel;
+            }
+        }
+
         for (size_t i = 0; i < ropes.size(); ++i) {
             RopeLink& r = ropes[i];
             Body& a = bodies[r.idA];
@@ -650,7 +797,9 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
                     float vn = Vec2::dot(vB - vA, n);
 
                     float springF = r.stiffness * ext;
-                    float dampF = r.damping * vn;
+                    float effDamp = (airResistance || !r.isSpring) ? r.damping : 0.0f;
+                    if (integratorType == 1) effDamp = 0.0f;
+                    float dampF = effDamp * vn;
                     float totalF = r.isSpring ? (springF + dampF) : std::max(0.0f, springF + dampF);
 
                     Vec2 impulse = n * (totalF * subDt);
@@ -668,16 +817,17 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
             }
         }
 
-        // 2. Сопротивление воздуха, внешняя сила F и гравитация g
         for (auto& b : bodies) {
             if (b.isStatic) continue;
 
-            float speed = b.vel.length();
-            float airDrag = 0.05f + 0.02f * speed;
-            float rotDrag = (b.shape == ShapeType::CIRCLE) ? 0.05f : 1.5f;
+            if (airResistance) {
+                float speed = b.vel.length();
+                float airDrag = 0.06f + 0.025f * speed;
+                float rotDrag = (b.shape == ShapeType::CIRCLE) ? 0.05f : 1.5f;
 
-            b.vel *= std::max(0.0f, 1.0f - airDrag * subDt);
-            b.angVel *= std::max(0.0f, 1.0f - rotDrag * subDt);
+                b.vel *= std::max(0.0f, 1.0f - airDrag * subDt);
+                b.angVel *= std::max(0.0f, 1.0f - rotDrag * subDt);
+            }
 
             b.vel.x += (b.appliedForceX * b.invMass) * subDt;
             b.vel.y -= G * subDt;
@@ -703,23 +853,39 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
         buildContacts();
         std::vector<float> ropeRigidImp(ropes.size(), 0.0f);
-        solveVelocityConstraints(subDt, ropeRigidImp);
+        std::vector<float> pulleyImp(pulleys.size(), 0.0f);
+        solveVelocityConstraints(subDt, ropeRigidImp, pulleyImp);
 
         for (size_t i = 0; i < ropes.size(); ++i) {
             if (ropes[i].isRigid && ropes[i].idB != -1) {
                 frameRopeTensionSum[i] += std::abs(ropeRigidImp[i]) / subDt;
             }
         }
+        for (size_t i = 0; i < pulleys.size(); ++i) {
+            framePulleyTensionSum[i] += std::abs(pulleyImp[i]) / subDt;
+        }
 
-        for (auto& b : bodies) {
+        for (size_t idx = 0; idx < bodies.size(); ++idx) {
+            Body& b = bodies[idx];
             if (!b.isStatic) {
-                b.pos += b.vel * subDt;
-                if (b.canRotate) {
-                    b.angle += b.angVel * subDt;
+                if (integratorType == 1 && contacts.empty()) {
+                    b.pos += explicitOldVel[idx] * subDt;
+                    if (b.canRotate) b.angle += explicitOldAngVel[idx] * subDt;
                 } else {
-                    b.angle = 0.0f;
-                    b.angVel = 0.0f;
+                    b.pos += b.vel * subDt;
+                    if (b.canRotate) {
+                        b.angle += b.angVel * subDt;
+                    } else {
+                        b.angle = 0.0f;
+                        b.angVel = 0.0f;
+                    }
                 }
+            }
+        }
+
+        for (auto& p : pulleys) {
+            if (p.idA >= 0 && p.idA < (int)bodies.size()) {
+                p.wheelAngle -= (bodies[p.idA].vel.y * subDt) / std::max(0.15f, p.radius);
             }
         }
 
@@ -728,7 +894,7 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
         std::vector<float> subNetFriction(bodies.size(), 0.0f);
         for (const auto& c : contacts) {
-            if (c.jnAccum > 1e-6f) {
+            if (airResistance && c.jnAccum > 1e-6f) {
                 if (c.idA >= 0 && bodies[c.idA].shape == ShapeType::CIRCLE && !bodies[c.idA].isStatic) {
                     bodies[c.idA].angVel *= std::max(0.0f, 1.0f - 0.35f * subDt);
                 }
@@ -739,14 +905,17 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
 
             if (c.idA == -1) {
                 frameNormalImp[c.idB] += c.jnAccum;
+                frameNormalDir[c.idB] += c.normal * c.jnAccum;
                 subNetFriction[c.idB] += c.jtAccum;
-            } else if (std::abs(c.normal.y) > 0.45f) {
+            } else if (std::abs(c.normal.y) > 0.35f) {
                 if (c.normal.y > 0.0f) {
                     frameNormalImp[c.idB] += c.jnAccum;
+                    frameNormalDir[c.idB] += c.normal * c.jnAccum;
                     frameTopImp[c.idA] += c.jnAccum;
                     subNetFriction[c.idB] += c.jtAccum;
                 } else {
                     frameNormalImp[c.idA] += c.jnAccum;
+                    frameNormalDir[c.idA] += (c.normal * -1.0f) * c.jnAccum;
                     frameTopImp[c.idB] += c.jnAccum;
                     subNetFriction[c.idA] -= c.jtAccum;
                 }
@@ -761,6 +930,11 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
     for (size_t i = 0; i < bodies.size(); ++i) {
         bodies[i].normalForce = frameNormalImp[i] / dt;
         bodies[i].topLoadForce = frameTopImp[i] / dt;
+        if (frameNormalDir[i].lengthSq() > 1e-6f) {
+            bodies[i].contactNormal = frameNormalDir[i].normalized();
+        } else {
+            bodies[i].contactNormal = {0.0f, 1.0f};
+        }
 
         float fTr = frameFrictionImp[i] / dt;
         if (bodies[i].vel.lengthSq() < 0.0004f && std::abs(bodies[i].appliedForceX) < 0.05f && fTr < 0.5f) {
@@ -772,8 +946,10 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
     for (size_t i = 0; i < ropes.size(); ++i) {
         ropes[i].tension = frameRopeTensionSum[i] / (float)steps;
     }
+    for (size_t i = 0; i < pulleys.size(); ++i) {
+        pulleys[i].tension = framePulleyTensionSum[i] / (float)steps;
+    }
 
-    // Запись трассеров: 0 = Нет, 1 = Удаляется по времени, 2 = Не удаляется
     for (auto& b : bodies) {
         if (b.isStatic) continue;
         if (b.trailMode == 0) {
@@ -804,11 +980,17 @@ void PhysicsWorld::step(float dt, int draggedBodyId, const Vec2& targetBodyPos, 
     if (draggedBodyId >= 0) {
         tryAttachBodyToFreeRopes(draggedBodyId);
     }
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    float elapsedMs = std::chrono::duration<float, std::milli>(tEnd - tStart).count();
+    lastStepTimeMs = (lastStepTimeMs <= 0.001f) ? elapsedMs : (0.85f * lastStepTimeMs + 0.15f * elapsedMs);
 }
 
 void PhysicsWorld::buildContacts() {
     contacts.clear();
     const float MARGIN = 0.003f;
+    int bpCount = 0;
+    int npCount = 0;
 
     auto initContactMasses = [&](ContactConstraint& c) {
         Body* a = (c.idA >= 0) ? &bodies[c.idA] : nullptr;
@@ -897,6 +1079,10 @@ void PhysicsWorld::buildContacts() {
             const Body& b = bodies[order[jj]];
             if (a.isStatic && b.isStatic) continue;
 
+            bpCount++;
+            if (!CheckAABBOverlap(a, b, MARGIN + 0.02f)) continue;
+
+            npCount++;
             OBBManifold m = CollideBodies(a, b, MARGIN);
             if (!m.hit) continue;
 
@@ -921,9 +1107,13 @@ void PhysicsWorld::buildContacts() {
             }
         }
     }
+
+    broadphasePairs = bpCount;
+    narrowphaseTests = npCount;
+    activeContactsCount = (int)contacts.size();
 }
 
-void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& ropeImpulseAccum) {
+void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& ropeImpulseAccum, std::vector<float>& pulleyImpulseAccum) {
     const int SOLVER_ITERS = 18;
 
     auto solveFriction = [&](ContactConstraint& c) {
@@ -956,6 +1146,64 @@ void PhysicsWorld::solveVelocityConstraints(float subDt, std::vector<float>& rop
     };
 
     for (int iter = 0; iter < SOLVER_ITERS; ++iter) {
+        for (size_t i = 0; i < pulleys.size(); ++i) {
+            PulleyLink& p = pulleys[i];
+            if (p.idA < 0 || p.idB < 0) continue;
+
+            Body& a = bodies[p.idA];
+            Body& b = bodies[p.idB];
+
+            Vec2 ancA = p.anchorLeft();
+            Vec2 ancB = p.anchorRight();
+
+            Vec2 rA = p.offsetA.rotated(a.angle);
+            Vec2 rB = p.offsetB.rotated(b.angle);
+            Vec2 pA = a.pos + rA;
+            Vec2 pB = b.pos + rB;
+
+            Vec2 dA = pA - ancA;
+            Vec2 dB = pB - ancB;
+            float lenA = dA.length();
+            float lenB = dB.length();
+            if (lenA <= 1e-5f || lenB <= 1e-5f) continue;
+
+            Vec2 uA = dA / lenA;
+            Vec2 uB = dB / lenB;
+            p.dirA = uA * -1.0f;
+            p.dirB = uB * -1.0f;
+
+            float curTotal = lenA + lenB;
+            if (curTotal < p.totalLength - 0.002f) continue;
+
+            float rnA = Vec2::cross(rA, uA);
+            float rnB = Vec2::cross(rB, uB);
+            float totalW = a.invMass + b.invMass + a.invInertia * rnA * rnA + b.invInertia * rnB * rnB;
+            if (totalW <= 1e-6f) continue;
+
+            Vec2 vA = a.vel + Vec2::cross(a.angVel, rA);
+            Vec2 vB = b.vel + Vec2::cross(b.angVel, rB);
+            float vRel = Vec2::dot(vA, uA) + Vec2::dot(vB, uB);
+
+            float stretchErr = std::max(0.0f, curTotal - p.totalLength);
+            float bias = (stretchErr * 0.15f) / subDt;
+
+            float dLambda = (vRel + bias) / totalW;
+            float newImp = std::max(0.0f, pulleyImpulseAccum[i] + dLambda);
+            dLambda = newImp - pulleyImpulseAccum[i];
+            pulleyImpulseAccum[i] = newImp;
+
+            Vec2 impA = uA * dLambda;
+            Vec2 impB = uB * dLambda;
+            if (!a.isStatic) {
+                a.vel -= impA * a.invMass;
+                a.angVel -= Vec2::cross(rA, impA) * a.invInertia;
+            }
+            if (!b.isStatic) {
+                b.vel -= impB * b.invMass;
+                b.angVel -= Vec2::cross(rB, impB) * b.invInertia;
+            }
+        }
+
         for (size_t i = 0; i < ropes.size(); ++i) {
             RopeLink& r = ropes[i];
             if (r.idB == -1) continue;
@@ -1191,6 +1439,7 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
                 Body& a = bodies[order[ii]];
                 Body& b = bodies[order[jj]];
                 if (a.isStatic && b.isStatic) continue;
+                if (!CheckAABBOverlap(a, b, 0.01f)) continue;
 
                 OBBManifold m = CollideBodies(a, b, 0.0f);
                 if (!m.hit || m.depth <= 1e-5f) continue;
@@ -1232,6 +1481,36 @@ void PhysicsWorld::solvePositionConstraints(int pinnedId) {
                     }
                 }
             }
+        }
+
+        for (auto& p : pulleys) {
+            if (p.idA < 0 || p.idB < 0) continue;
+            Body& a = bodies[p.idA];
+            Body& b = bodies[p.idB];
+
+            Vec2 ancA = p.anchorLeft();
+            Vec2 ancB = p.anchorRight();
+            Vec2 pA = a.localToWorld(p.offsetA);
+            Vec2 pB = b.localToWorld(p.offsetB);
+            Vec2 dA = pA - ancA;
+            Vec2 dB = pB - ancB;
+            float lenA = dA.length();
+            float lenB = dB.length();
+            if (lenA <= 1e-5f || lenB <= 1e-5f) continue;
+
+            Vec2 uA = dA / lenA;
+            Vec2 uB = dB / lenB;
+            float curTotal = lenA + lenB;
+            if (curTotal > p.totalLength) {
+                float diff = curTotal - p.totalLength;
+                float totalW = a.invMass + b.invMass;
+                if (totalW > 1e-6f) {
+                    if (!a.isStatic) a.pos -= uA * (diff * a.invMass / totalW);
+                    if (!b.isStatic) b.pos -= uB * (diff * b.invMass / totalW);
+                }
+            }
+            p.dirA = uA * -1.0f;
+            p.dirB = uB * -1.0f;
         }
 
         for (auto& r : ropes) {
@@ -1302,6 +1581,7 @@ void PhysicsWorld::updateStaticTelemetry() {
         b.normalForce = 0.0f;
         b.topLoadForce = 0.0f;
         b.frictionForce = 0.0f;
+        b.contactNormal = {0.0f, 1.0f};
     }
 
     const float EPS = 0.04f;
@@ -1318,14 +1598,16 @@ void PhysicsWorld::updateStaticTelemetry() {
 
         if (minY <= groundY + EPS) {
             b.supportedBy = -2;
+            b.contactNormal = {0.0f, 1.0f};
             continue;
         }
 
         for (const auto& other : bodies) {
-            if (other.id == b.id || other.isStatic) continue;
+            if (other.id == b.id) continue;
             OBBManifold m = CollideBodies(other, b, EPS);
-            if (m.hit && m.normal.y > 0.5f) {
+            if (m.hit && m.normal.y > 0.35f) {
                 b.supportedBy = other.id;
+                b.contactNormal = m.normal;
                 break;
             }
         }
@@ -1355,6 +1637,18 @@ void PhysicsWorld::updateStaticTelemetry() {
         }
     }
 
+    for (auto& p : pulleys) {
+        if (p.idA >= 0 && p.idB >= 0) {
+            const Body& a = bodies[p.idA];
+            const Body& b = bodies[p.idB];
+            Vec2 dA = a.localToWorld(p.offsetA) - p.anchorLeft();
+            Vec2 dB = b.localToWorld(p.offsetB) - p.anchorRight();
+            p.dirA = (dA.length() > 1e-5f) ? (dA.normalized() * -1.0f) : Vec2{0.0f, 1.0f};
+            p.dirB = (dB.length() > 1e-5f) ? (dB.normalized() * -1.0f) : Vec2{0.0f, 1.0f};
+            p.tension = (2.0f * a.mass * b.mass / std::max(0.1f, a.mass + b.mass)) * G;
+        }
+    }
+
     for (int id : order) {
         Body& b = bodies[id];
         float totalDown = b.mass * G + b.topLoadForce;
@@ -1366,16 +1660,137 @@ void PhysicsWorld::updateStaticTelemetry() {
                 held = true;
             }
         }
+        for (const auto& p : pulleys) {
+            if ((p.idA == id || p.idB == id) && b.supportedBy == -1) {
+                held = true;
+            }
+        }
         if (!held) {
             if (b.supportedBy == -2) {
                 b.normalForce = totalDown;
             } else if (b.supportedBy >= 0) {
-                b.normalForce = totalDown;
-                bodies[b.supportedBy].topLoadForce += totalDown;
+                float cosAlpha = std::clamp(b.contactNormal.y, 0.1f, 1.0f);
+                float sinAlpha = std::abs(b.contactNormal.x);
+                b.normalForce = totalDown * cosAlpha;
+                if (!bodies[b.supportedBy].isStatic) {
+                    bodies[b.supportedBy].topLoadForce += totalDown;
+                }
+                if (sinAlpha > 0.02f) {
+                    b.frictionForce = std::min(totalDown * sinAlpha, b.friction * b.normalForce);
+                }
             }
             if (std::abs(b.appliedForceX) > 0.01f) {
                 b.frictionForce = std::min(std::abs(b.appliedForceX), b.friction * b.normalForce);
             }
         }
     }
+}
+
+bool PhysicsWorld::computeCenterOfMass(Vec2& outPos, Vec2& outVel, float& outTotalMass) const {
+    outPos = {0.0f, 0.0f};
+    outVel = {0.0f, 0.0f};
+    outTotalMass = 0.0f;
+    for (const auto& b : bodies) {
+        if (b.isStatic) continue;
+        outPos += b.pos * b.mass;
+        outVel += b.vel * b.mass;
+        outTotalMass += b.mass;
+    }
+    if (outTotalMass <= 1e-5f) return false;
+    outPos = outPos / outTotalMass;
+    outVel = outVel / outTotalMass;
+    return true;
+}
+
+bool PhysicsWorld::saveSceneToFile(const std::string& filename) const {
+    std::ofstream out(filename);
+    if (!out.is_open()) return false;
+
+    out << "MECHANICS_ENGINE_SCENE_V1\n";
+    out << "ENV " << G << " " << substeps << " " << integratorType << " " << (airResistance ? 1 : 0) << " " << activePreset << "\n";
+    out << "BODIES " << bodies.size() << "\n";
+    for (const auto& b : bodies) {
+        out << (int)b.shape << " " << b.pos.x << " " << b.pos.y << " " << b.width << " " << b.height << " "
+            << b.radius << " " << b.mass << " " << b.angle << " " << b.friction << " " << b.restitution << " "
+            << b.appliedForceX << " " << (b.isStatic ? 1 : 0) << " " << (b.supportLocked ? 1 : 0) << " "
+            << (b.canRotate ? 1 : 0) << " " << b.trailMode << " " << b.trailLifetime << "\n";
+    }
+    out << "ROPES " << ropes.size() << "\n";
+    for (const auto& r : ropes) {
+        out << r.idA << " " << r.idB << " " << r.offsetA.x << " " << r.offsetA.y << " "
+            << r.offsetB.x << " " << r.offsetB.y << " " << r.freePos.x << " " << r.freePos.y << " "
+            << r.restLength << " " << r.stiffness << " " << (r.isRigid ? 1 : 0) << " " << (r.isSpring ? 1 : 0) << "\n";
+    }
+    out << "PULLEYS " << pulleys.size() << "\n";
+    for (const auto& p : pulleys) {
+        out << p.idA << " " << p.idB << " " << p.offsetA.x << " " << p.offsetA.y << " "
+            << p.offsetB.x << " " << p.offsetB.y << " " << p.wheelPos.x << " " << p.wheelPos.y << " "
+            << p.radius << " " << p.totalLength << "\n";
+    }
+    return true;
+}
+
+bool PhysicsWorld::loadSceneFromFile(const std::string& filename) {
+    std::ifstream in(filename);
+    if (!in.is_open()) return false;
+
+    std::string header;
+    in >> header;
+    if (header != "MECHANICS_ENGINE_SCENE_V1") return false;
+
+    clearScene();
+    std::string tag;
+    int airInt = 0;
+    in >> tag >> G >> substeps >> integratorType >> airInt >> activePreset;
+    airResistance = (airInt != 0);
+
+    size_t bodyCount = 0;
+    in >> tag >> bodyCount;
+    for (size_t i = 0; i < bodyCount; ++i) {
+        int shapeInt = 0, isStat = 0, supLock = 1, canRot = 1;
+        Body b;
+        b.id = (int)i;
+        in >> shapeInt >> b.pos.x >> b.pos.y >> b.width >> b.height
+           >> b.radius >> b.mass >> b.angle >> b.friction >> b.restitution
+           >> b.appliedForceX >> isStat >> supLock >> canRot >> b.trailMode >> b.trailLifetime;
+        b.shape = (shapeInt == 1) ? ShapeType::CIRCLE : ShapeType::BOX;
+        b.isStatic = (isStat != 0);
+        b.supportLocked = (supLock != 0);
+        b.canRotate = (canRot != 0);
+        b.spawnPos = b.pos;
+        b.name = (b.shape == ShapeType::CIRCLE) ? "Шар" : "Груз";
+        b.updateMassData();
+        bodies.push_back(b);
+    }
+
+    size_t ropeCount = 0;
+    in >> tag >> ropeCount;
+    for (size_t i = 0; i < ropeCount; ++i) {
+        RopeLink r;
+        r.id = (int)i;
+        int isRig = 0, isSpr = 0;
+        in >> r.idA >> r.idB >> r.offsetA.x >> r.offsetA.y
+           >> r.offsetB.x >> r.offsetB.y >> r.freePos.x >> r.freePos.y
+           >> r.restLength >> r.stiffness >> isRig >> isSpr;
+        r.isRigid = (isRig != 0);
+        r.isSpring = (isSpr != 0);
+        r.currentLength = r.restLength;
+        ropes.push_back(r);
+    }
+
+    size_t pulleyCount = 0;
+    if (in >> tag >> pulleyCount) {
+        for (size_t i = 0; i < pulleyCount; ++i) {
+            PulleyLink p;
+            p.id = (int)i;
+            in >> p.idA >> p.idB >> p.offsetA.x >> p.offsetA.y
+               >> p.offsetB.x >> p.offsetB.y >> p.wheelPos.x >> p.wheelPos.y
+               >> p.radius >> p.totalLength;
+            pulleys.push_back(p);
+        }
+    }
+
+    updateStaticTelemetry();
+    saveSnapshot();
+    return true;
 }

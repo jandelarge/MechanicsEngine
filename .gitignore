@@ -6,3 +6,6 @@ build/
 *.o
 *.ninja
 .ninja_*
+.aider*
+.py
+project_code_export.md

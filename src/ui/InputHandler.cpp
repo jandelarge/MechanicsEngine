@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <algorithm>
+#include <fstream>
+#include <iomanip>
 
 static const float BASE_PPM = 70.0f;
 
@@ -15,8 +17,12 @@ static bool CheckInputBoxClick(Vector2 m, float x, float y) {
     return PointInRect(m, {x, by, 268.0f, 28.0f});
 }
 
+void InputHandler::showStatus(AppState& state, const std::string& msg, float duration) {
+    state.statusMessage = msg;
+    state.statusTimer = duration;
+}
+
 Rectangle InputHandler::getDockRect(int screenH) {
-    // 7 кнопок: Пуск, Сброс | [1] Курсор, [2] Создать, [3] Осциллограф, [4] Глазик, [5] Мусорка
     return {20.0f, (float)screenH - 78.0f, 382.0f, 58.0f};
 }
 
@@ -35,7 +41,7 @@ Rectangle InputHandler::getDockButtonRect(int index, int screenH) {
 
 Rectangle InputHandler::getAddMenuRect(int screenH) {
     Rectangle dock = getDockRect(screenH);
-    return {dock.x, dock.y - 70.0f, 490.0f, 62.0f};
+    return {dock.x, dock.y - 70.0f, 586.0f, 62.0f};
 }
 
 Rectangle InputHandler::getAddMenuItemRect(int index, int screenH) {
@@ -50,15 +56,14 @@ Rectangle InputHandler::getAddMenuItemRect(int index, int screenH) {
 Rectangle InputHandler::getChronoBarRect(int screenW) {
     float canvasW = (float)(screenW - INSPECTOR_WIDTH);
     float barW = 432.0f;
-    // Строго по центру рабочей области холста
     float x = (canvasW - barW) * 0.5f;
     return {x, 14.0f, barW, 40.0f};
 }
 
 Rectangle InputHandler::getGraphRect(const AppState& state, int screenW, int screenH) {
     float canvasW = (float)(screenW - INSPECTOR_WIDTH);
-    float gw = std::clamp(state.graphSize.x, 380.0f, std::max(380.0f, canvasW - 24.0f));
-    float gh = std::clamp(state.graphSize.y, 190.0f, std::max(190.0f, (float)screenH - 24.0f));
+    float gw = std::clamp(state.graphSize.x, 450.0f, std::max(450.0f, canvasW - 24.0f));
+    float gh = std::clamp(state.graphSize.y, 210.0f, std::max(210.0f, (float)screenH - 24.0f));
 
     float x = (state.graphPos.x < 0.0f) ? (canvasW - gw - 20.0f) : state.graphPos.x;
     float y = (state.graphPos.y < 0.0f) ? ((float)screenH - gh - 20.0f) : state.graphPos.y;
@@ -100,7 +105,6 @@ void InputHandler::recordTelemetry(const PhysicsWorld& world, AppState& state) {
     const Body& b = world.bodies[targetId];
     float speed = b.vel.length();
 
-    // Точная нижняя точка тела и фильтрация микро-зазора коллизии (чтобы на полу Ep был строго 0.0 Дж)
     float minY = b.pos.y - b.radius;
     if (b.shape == ShapeType::BOX) {
         auto verts = b.getVertices();
@@ -132,6 +136,61 @@ void InputHandler::recordTelemetry(const PhysicsWorld& world, AppState& state) {
     smp.ep = ep;
     smp.etot = ek + ep;
 
+    float thVal = smp.etot;
+    float simVal = smp.etot;
+
+    const PulleyLink* attachedPulley = nullptr;
+    for (const auto& p : world.pulleys) {
+        if (p.idA == targetId || p.idB == targetId) {
+            attachedPulley = &p;
+            break;
+        }
+    }
+
+    if (attachedPulley && attachedPulley->idA >= 0 && attachedPulley->idB >= 0) {
+        float m1 = world.bodies[attachedPulley->idA].mass;
+        float m2 = world.bodies[attachedPulley->idB].mass;
+        float aTh = world.G * std::abs(m1 - m2) / std::max(0.1f, m1 + m2);
+        float sMoved = (b.pos - b.spawnPos).length();
+        thVal = std::sqrt(std::max(0.0f, 2.0f * aTh * sMoved));
+        simVal = speed;
+    } else if (world.activePreset == 1) {
+        float alpha = 20.0f * 0.0174532925f;
+        float mu = b.friction;
+        float aTh = (b.shape == ShapeType::CIRCLE)
+                  ? ((2.0f / 3.0f) * world.G * std::sin(alpha))
+                  : (world.G * std::max(0.0f, std::sin(alpha) - mu * std::cos(alpha)));
+        float sMoved = (b.pos - b.spawnPos).length();
+        thVal = std::sqrt(std::max(0.0f, 2.0f * aTh * sMoved));
+        simVal = speed;
+    } else if (world.activePreset == 4) {
+        if (std::abs(b.appliedForceX) > 0.1f) {
+            float totalM = b.mass + b.topLoadForce / world.G;
+            float fMax = b.friction * totalM * world.G;
+            if (std::abs(b.appliedForceX) <= fMax) {
+                thVal = std::abs(b.appliedForceX);
+                simVal = b.frictionForce;
+            } else {
+                float aTh = (std::abs(b.appliedForceX) - fMax) / b.mass;
+                float sMoved = std::abs(b.pos.x - b.spawnPos.x);
+                thVal = std::sqrt(std::max(0.0f, 2.0f * aTh * sMoved));
+                simVal = speed;
+            }
+        }
+    } else if (world.activePreset == 7) {
+        float sFall = std::max(0.0f, b.spawnPos.y - b.pos.y);
+        thVal = std::sqrt(2.0f * world.G * sFall);
+        simVal = speed;
+    } else if (!state.telemetryHistory.empty()) {
+        thVal = state.telemetryHistory.front().etot;
+        simVal = smp.etot;
+    }
+
+    smp.theoryVal = thVal;
+    smp.simVal = simVal;
+    float denom = std::max(std::abs(thVal), 0.1f);
+    smp.errorPct = std::clamp((std::abs(simVal - thVal) / denom) * 100.0f, 0.0f, 100.0f);
+
     if (!state.telemetryHistory.empty() && std::abs(state.telemetryHistory.back().time - smp.time) < 1e-5f) {
         state.telemetryHistory.back() = smp;
     } else {
@@ -145,6 +204,24 @@ void InputHandler::recordTelemetry(const PhysicsWorld& world, AppState& state) {
 void InputHandler::clearTelemetry(const PhysicsWorld& world, AppState& state) {
     state.telemetryHistory.clear();
     recordTelemetry(world, state);
+}
+
+bool InputHandler::exportTelemetryCSV(const AppState& state, const std::string& filename) {
+    if (state.telemetryHistory.empty()) return false;
+    std::ofstream out(filename, std::ios::binary);
+    if (!out.is_open()) return false;
+
+    const unsigned char bom[3] = {0xEF, 0xBB, 0xBF};
+    out.write(reinterpret_cast<const char*>(bom), 3);
+
+    out << "Время_с;X_м;Y_м;Скорость_мс;УглСкор_радс;Реакция_N_Н;Трение_Fтр_Н;Ek_Дж;Ep_Дж;Eполн_Дж;Теория;Симуляция;Погрешность_%\n";
+    out << std::fixed << std::setprecision(4);
+    for (const auto& s : state.telemetryHistory) {
+        out << s.time << ";" << s.x << ";" << s.y << ";" << s.speed << ";" << s.angVel << ";"
+            << s.normalF << ";" << s.frictionF << ";" << s.ek << ";" << s.ep << ";" << s.etot << ";"
+            << s.theoryVal << ";" << s.simVal << ";" << s.errorPct << "\n";
+    }
+    return true;
 }
 
 void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
@@ -165,7 +242,7 @@ void InputHandler::commitEditField(PhysicsWorld& world, AppState& state) {
                 break;
             case EditField::BODY_RESTITUTION:
                 if (state.selectedBodyId >= 0 && state.selectedBodyId < (int)world.bodies.size()) {
-                    world.bodies[state.selectedBodyId].restitution = std::clamp(val, 0.0f, 0.95f);
+                    world.bodies[state.selectedBodyId].restitution = std::clamp(val, 0.0f, 0.99f);
                 }
                 break;
             case EditField::BODY_WIDTH:
@@ -260,6 +337,150 @@ static void ActivateInputField(PhysicsWorld& world, AppState& state, EditField f
     state.inputBuffer.clear();
 }
 
+void InputHandler::handleMenuScreens(PhysicsWorld& world, AppState& state, int screenW, int screenH) {
+    Vector2 m = GetMousePosition();
+
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        if (state.screen == AppScreen::STUDY_HUB) {
+            state.screen = AppScreen::MAIN_MENU;
+            return;
+        } else if (state.screen == AppScreen::SETTINGS || state.screen == AppScreen::ABOUT) {
+            state.screen = state.prevScreen;
+            return;
+        }
+    }
+
+    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
+
+    if (state.screen == AppScreen::MAIN_MENU) {
+        float menuW = 460.0f;
+        float startX = ((float)screenW - menuW) * 0.5f;
+        float startY = (float)screenH * 0.5f - 86.0f;
+
+        if (PointInRect(m, {startX, startY + 0 * 60.0f, menuW, 48.0f})) {
+            state.screen = AppScreen::STUDY_HUB;
+            return;
+        }
+        if (PointInRect(m, {startX, startY + 1 * 60.0f, menuW, 48.0f})) {
+            if (world.activePreset != 0 || world.bodies.empty()) {
+                world.setupDefaultScene();
+            }
+            state.paused = true;
+            state.selectedBodyId = -1;
+            state.selectedRopeId = -1;
+            state.camPos = {-0.8f, 4.3f};
+            state.camZoom = 1.0f;
+            clearTelemetry(world, state);
+            state.screen = AppScreen::SANDBOX;
+            return;
+        }
+        if (PointInRect(m, {startX, startY + 2 * 60.0f, menuW, 48.0f})) {
+            state.prevScreen = AppScreen::MAIN_MENU;
+            state.screen = AppScreen::SETTINGS;
+            return;
+        }
+        if (PointInRect(m, {startX, startY + 3 * 60.0f, menuW, 48.0f})) {
+            state.prevScreen = AppScreen::MAIN_MENU;
+            state.screen = AppScreen::ABOUT;
+            return;
+        }
+        if (PointInRect(m, {startX, startY + 4 * 60.0f, menuW, 48.0f})) {
+            state.shouldExit = true;
+            return;
+        }
+        return;
+    }
+
+    if (state.screen == AppScreen::STUDY_HUB) {
+        if (PointInRect(m, {40.0f, 26.0f, 190.0f, 36.0f})) {
+            state.screen = AppScreen::MAIN_MENU;
+            return;
+        }
+        if (PointInRect(m, {(float)screenW - 210.0f, 26.0f, 170.0f, 36.0f})) {
+            state.prevScreen = AppScreen::STUDY_HUB;
+            state.screen = AppScreen::SETTINGS;
+            return;
+        }
+
+        float gridW = std::min((float)screenW - 80.0f, 1080.0f);
+        float startX = ((float)screenW - gridW) * 0.5f;
+        float startY = 98.0f;
+        float cardW = (gridW - 24.0f) * 0.5f;
+        float cardH = std::clamp(((float)screenH - 130.0f) / 4.0f - 12.0f, 108.0f, 134.0f);
+
+        for (int i = 0; i < 8; ++i) {
+            int col = i % 2;
+            int row = i / 2;
+            Rectangle card = {startX + col * (cardW + 24.0f), startY + row * (cardH + 12.0f), cardW, cardH};
+            if (PointInRect(m, card)) {
+                world.loadLabPreset(i + 1);
+                state.paused = true;
+                state.selectedBodyId = -1;
+                state.selectedRopeId = -1;
+                state.camPos = {0.0f, 4.3f};
+                state.camZoom = 1.0f;
+                if (i + 1 == 4 || i + 1 == 5) state.forceViewMode = 1;
+                clearTelemetry(world, state);
+                state.screen = AppScreen::STUDY_LAB;
+                return;
+            }
+        }
+        return;
+    }
+
+    if (state.screen == AppScreen::SETTINGS) {
+        if (PointInRect(m, {40.0f, 26.0f, 190.0f, 36.0f})) {
+            state.screen = state.prevScreen;
+            return;
+        }
+
+        float panW = 680.0f;
+        float px = ((float)screenW - panW) * 0.5f;
+        float py = 96.0f;
+        float bx = px + 24.0f;
+        float bw = panW - 48.0f;
+        float halfW = (bw - 12.0f) * 0.5f;
+
+        if (PointInRect(m, {bx, py + 52.0f, bw, 36.0f}))  { world.integratorType = 0; return; }
+        if (PointInRect(m, {bx, py + 94.0f, bw, 36.0f}))  { world.integratorType = 2; return; }
+        if (PointInRect(m, {bx, py + 136.0f, bw, 36.0f})) { world.integratorType = 1; return; }
+
+        if (PointInRect(m, {bx, py + 214.0f, halfW, 36.0f}))               { world.airResistance = false; return; }
+        if (PointInRect(m, {bx + halfW + 12.0f, py + 214.0f, halfW, 36.0f})) { world.airResistance = true; return; }
+
+        float sw4 = (bw - 18.0f) / 4.0f;
+        int subVals[4] = {12, 24, 48, 80};
+        for (int i = 0; i < 4; ++i) {
+            if (PointInRect(m, {bx + i * (sw4 + 6.0f), py + 292.0f, sw4, 36.0f})) {
+                world.substeps = subVals[i];
+                return;
+            }
+        }
+
+        if (PointInRect(m, {bx, py + 370.0f, halfW, 36.0f})) {
+            state.showCenterOfMass = !state.showCenterOfMass;
+            return;
+        }
+        if (PointInRect(m, {bx + halfW + 12.0f, py + 370.0f, halfW, 36.0f})) {
+            state.showProfiler = !state.showProfiler;
+            return;
+        }
+        if (PointInRect(m, {bx, py + 414.0f, bw, 36.0f})) {
+            state.forceViewMode = (state.forceViewMode + 1) % 3;
+            return;
+        }
+        return;
+    }
+
+    if (state.screen == AppScreen::ABOUT) {
+        if (PointInRect(m, {40.0f, 26.0f, 190.0f, 36.0f})) {
+            state.screen = state.prevScreen;
+            return;
+        }
+        return;
+    }
+}
+
 bool InputHandler::handleChronoBar(PhysicsWorld& world, AppState& state, int screenW) {
     Vector2 m = GetMousePosition();
     Rectangle bar = getChronoBarRect(screenW);
@@ -271,10 +492,8 @@ bool InputHandler::handleChronoBar(PhysicsWorld& world, AppState& state, int scr
         float y = bar.y + 6.0f;
         float h = 28.0f;
 
-        // 1. Индикатор времени (104px)
         x += 110.0f;
 
-        // 2. Кнопка сброса времени и трассеров "Сброс t" (68px)
         if (PointInRect(m, {x, y, 68.0f, h})) {
             world.simTime = 0.0f;
             for (auto& b : world.bodies) b.clearTrail();
@@ -283,16 +502,14 @@ bool InputHandler::handleChronoBar(PhysicsWorld& world, AppState& state, int scr
         }
         x += 74.0f;
 
-        // 3. Кнопка пошагового кадра ">| Шаг" (68px)
         if (PointInRect(m, {x, y, 68.0f, h})) {
             if (state.paused && world.simTime == 0.0f) world.saveSnapshot();
             state.paused = true;
             state.stepOneFrame = true;
             return true;
         }
-        x += 80.0f; // 68px кнопка + 12px отступ с разделителем
+        x += 80.0f;
 
-        // 4. Переключатели скорости времени: 0.25x, 0.5x, 1.0x
         float scales[3] = {0.25f, 0.5f, 1.0f};
         for (int i = 0; i < 3; ++i) {
             if (PointInRect(m, {x, y, 48.0f, h})) {
@@ -316,20 +533,18 @@ bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int s
     Rectangle gr = getGraphRect(state, screenW, screenH);
     float canvasW = (float)(screenW - INSPECTOR_WIDTH);
 
-    // Изменение размера окна осциллографа за правый нижний угол
     if (state.isResizingGraph) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            float maxW = std::max(380.0f, canvasW - gr.x - 12.0f);
-            float maxH = std::max(190.0f, (float)screenH - gr.y - 12.0f);
-            state.graphSize.x = std::clamp(m.x - gr.x, 380.0f, std::min(780.0f, maxW));
-            state.graphSize.y = std::clamp(m.y - gr.y, 190.0f, std::min(540.0f, maxH));
+            float maxW = std::max(450.0f, canvasW - gr.x - 12.0f);
+            float maxH = std::max(210.0f, (float)screenH - gr.y - 12.0f);
+            state.graphSize.x = std::clamp(m.x - gr.x, 450.0f, std::min(820.0f, maxW));
+            state.graphSize.y = std::clamp(m.y - gr.y, 210.0f, std::min(560.0f, maxH));
             return true;
         } else {
             state.isResizingGraph = false;
         }
     }
 
-    // Перетаскивание окна осциллографа
     if (state.isDraggingGraph) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             state.graphPos.x = std::clamp(m.x - state.graphDragOffset.x, 12.0f, std::max(12.0f, canvasW - gr.width - 12.0f));
@@ -350,22 +565,31 @@ bool InputHandler::handleGraphWindow(PhysicsWorld& world, AppState& state, int s
             state.isResizingGraph = true;
             return true;
         }
-        if (PointInRect(m, {gr.x + gr.width - 266.0f, gr.y + 6.0f, 90.0f, 24.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 332.0f, gr.y + 6.0f, 72.0f, 24.0f})) {
             state.graphTab = 0;
             return true;
         }
-        if (PointInRect(m, {gr.x + gr.width - 170.0f, gr.y + 6.0f, 136.0f, 24.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 256.0f, gr.y + 6.0f, 92.0f, 24.0f})) {
             state.graphTab = 1;
             return true;
         }
-        if (PointInRect(m, {gr.x + gr.width - 28.0f, gr.y + 6.0f, 22.0f, 24.0f})) {
+        if (PointInRect(m, {gr.x + gr.width - 160.0f, gr.y + 6.0f, 96.0f, 24.0f})) {
+            state.graphTab = 2;
+            return true;
+        }
+        if (PointInRect(m, {gr.x + gr.width - 60.0f, gr.y + 6.0f, 32.0f, 24.0f})) {
+            if (exportTelemetryCSV(state, "telemetry_export.csv")) {
+                showStatus(state, "Экспорт CSV: telemetry_export.csv сохранён!");
+            }
+            return true;
+        }
+        if (PointInRect(m, {gr.x + gr.width - 24.0f, gr.y + 6.0f, 20.0f, 24.0f})) {
             state.showGraph = false;
             state.isDraggingGraph = false;
             state.isResizingGraph = false;
             return true;
         }
 
-        // 5. Захват окна за шапку/рамку для перемещения
         state.isDraggingGraph = true;
         state.graphDragOffset = {m.x - gr.x, m.y - gr.y};
     }
@@ -380,7 +604,7 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
     if (state.addMenuOpen) {
         Rectangle menuRect = getAddMenuRect(screenH);
         if (PointInRect(m, menuRect)) {
-            for (int i = 0; i < 5; ++i) {
+            for (int i = 0; i < 6; ++i) {
                 if (PointInRect(m, getAddMenuItemRect(i, screenH))) {
                     state.hoveredAddMenuBtn = i;
                     break;
@@ -388,12 +612,13 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
             }
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && state.hoveredAddMenuBtn != -1) {
                 commitEditField(world, state);
-                ToolType addTools[5] = {
+                ToolType addTools[6] = {
                     ToolType::ADD_BLOCK,
                     ToolType::ADD_CIRCLE,
                     ToolType::ADD_SUPPORT,
                     ToolType::ADD_ROPE,
-                    ToolType::ADD_SPRING
+                    ToolType::ADD_SPRING,
+                    ToolType::ADD_PULLEY
                 };
                 state.activeTool = addTools[state.hoveredAddMenuBtn];
                 state.ropeStartBodyId = -1;
@@ -435,15 +660,12 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
         } else if (state.hoveredDockBtn == 3) {
             state.addMenuOpen = !state.addMenuOpen;
         } else if (state.hoveredDockBtn == 4) {
-            // [3] Осциллограф
             state.showGraph = !state.showGraph;
             state.addMenuOpen = false;
         } else if (state.hoveredDockBtn == 5) {
-            // [4] Глазик: Скрыть / Показать все тела (оставив трассеры)
             state.hideAllBodies = !state.hideAllBodies;
             state.addMenuOpen = false;
         } else if (state.hoveredDockBtn == 6) {
-            // [5] Удалить (мусорка)
             state.activeTool = ToolType::DELETE_OBJ;
             state.ropeStartBodyId = -1;
             state.creatingSupportBodyId = -1;
@@ -456,7 +678,7 @@ bool InputHandler::handleDock(PhysicsWorld& world, AppState& state, int screenH)
 void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int screenW, int screenH) {
     Vector2 m = GetMousePosition();
     float panelX = (float)(screenW - INSPECTOR_WIDTH);
-    float topY = 12.0f;
+    float topY = 10.0f;
 
     if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || m.x < panelX) return;
 
@@ -528,7 +750,6 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
                 return;
             }
 
-            // 3 отдельные кнопки трассера: [ Нет ] [ По времени ] [ Вечный ]
             float trBtnY = topY + 376.0f;
             if (PointInRect(m, {x, trBtnY, 76.0f, 26.0f})) {
                 commitEditField(world, state);
@@ -603,22 +824,105 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         return;
     }
 
-    // Параметры среды (когда ничего не выбрано)
-    if (CheckInputBoxClick(m, x, topY + 40)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
-    if (PointInRect(m, {x, topY + 92, 128, 26}))       { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
-    if (PointInRect(m, {x + 140, topY + 92, 128, 26})) { commitEditField(world, state); world.G = 10.0f; world.updateStaticTelemetry(); return; }
-    if (CheckInputBoxClick(m, x, topY + 124)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
-    if (CheckInputBoxClick(m, x, topY + 174)) { ActivateInputField(world, state, EditField::NEW_ROPE_LENGTH); return; }
+    if (state.screen == AppScreen::STUDY_LAB) {
+        if (PointInRect(m, {x, topY + 4.0f, 130.0f, 28.0f})) {
+            commitEditField(world, state);
+            state.paused = true;
+            state.screen = AppScreen::MAIN_MENU;
+            return;
+        }
+        if (PointInRect(m, {x + 138.0f, topY + 4.0f, 130.0f, 28.0f})) {
+            commitEditField(world, state);
+            state.paused = true;
+            state.screen = AppScreen::STUDY_HUB;
+            return;
+        }
 
-    if (PointInRect(m, {x, topY + 226, w, 28})) {
+        if (PointInRect(m, {x, topY + 312.0f, 130.0f, 28.0f}))        { world.airResistance = false; return; }
+        if (PointInRect(m, {x + 138.0f, topY + 312.0f, 130.0f, 28.0f})) { world.airResistance = true; return; }
+
+        if (PointInRect(m, {x, topY + 366.0f, w, 26.0f}))              { world.integratorType = 0; return; }
+        if (PointInRect(m, {x, topY + 396.0f, 130.0f, 26.0f}))         { world.integratorType = 1; return; }
+        if (PointInRect(m, {x + 138.0f, topY + 396.0f, 130.0f, 26.0f})) { world.integratorType = 2; return; }
+
+        if (PointInRect(m, {x, topY + 432.0f, w, 26.0f})) {
+            state.camPos = {0.0f, 4.3f};
+            state.camZoom = 1.0f;
+            return;
+        }
+        if (PointInRect(m, {x, topY + 462.0f, 130.0f, 26.0f})) {
+            state.showCenterOfMass = !state.showCenterOfMass;
+            return;
+        }
+        if (PointInRect(m, {x + 138.0f, topY + 462.0f, 130.0f, 26.0f})) {
+            state.showProfiler = !state.showProfiler;
+            return;
+        }
+
+        if (PointInRect(m, {x, topY + 498.0f, 130.0f, 28.0f})) {
+            state.showGraph = !state.showGraph;
+            if (state.showGraph) state.graphTab = 2;
+            return;
+        }
+        if (PointInRect(m, {x + 138.0f, topY + 498.0f, 130.0f, 28.0f})) {
+            state.paused = true;
+            world.restoreSnapshot();
+            clearTelemetry(world, state);
+            return;
+        }
+
+        if (PointInRect(m, {x, topY + 534.0f, w, 28.0f})) {
+            state.screen = AppScreen::SANDBOX;
+            showStatus(state, "Открыт режим свободной песочницы");
+            return;
+        }
+        return;
+    }
+
+    if (PointInRect(m, {x, topY + 4.0f, 130.0f, 28.0f})) {
+        commitEditField(world, state);
+        state.paused = true;
+        state.screen = AppScreen::MAIN_MENU;
+        return;
+    }
+    if (PointInRect(m, {x + 138.0f, topY + 4.0f, 130.0f, 28.0f})) {
+        commitEditField(world, state);
+        state.paused = true;
+        state.screen = AppScreen::STUDY_HUB;
+        return;
+    }
+
+    if (CheckInputBoxClick(m, x, topY + 68.0f)) { ActivateInputField(world, state, EditField::WORLD_GRAVITY); return; }
+    if (PointInRect(m, {x, topY + 122.0f, 130.0f, 26.0f}))        { commitEditField(world, state); world.G = 9.81f; world.updateStaticTelemetry(); return; }
+    if (PointInRect(m, {x + 138.0f, topY + 122.0f, 130.0f, 26.0f})) { commitEditField(world, state); world.G = 10.0f; world.updateStaticTelemetry(); return; }
+
+    if (PointInRect(m, {x, topY + 154.0f, 130.0f, 26.0f}))        { commitEditField(world, state); world.airResistance = false; return; }
+    if (PointInRect(m, {x + 138.0f, topY + 154.0f, 130.0f, 26.0f})) { commitEditField(world, state); world.airResistance = true; return; }
+
+    if (CheckInputBoxClick(m, x, topY + 186.0f)) { ActivateInputField(world, state, EditField::WORLD_SUBSTEPS); return; }
+
+    if (PointInRect(m, {x, topY + 262.0f, w, 26.0f}))              { commitEditField(world, state); world.integratorType = 0; return; }
+    if (PointInRect(m, {x, topY + 292.0f, 130.0f, 26.0f}))         { commitEditField(world, state); world.integratorType = 1; return; }
+    if (PointInRect(m, {x + 138.0f, topY + 292.0f, 130.0f, 26.0f})) { commitEditField(world, state); world.integratorType = 2; return; }
+
+    if (PointInRect(m, {x, topY + 344.0f, w, 26.0f})) {
         commitEditField(world, state);
         state.camPos = {-0.8f, 4.3f};
         state.camZoom = 1.0f;
         return;
     }
+    if (PointInRect(m, {x, topY + 374.0f, 130.0f, 26.0f})) {
+        commitEditField(world, state);
+        state.showCenterOfMass = !state.showCenterOfMass;
+        return;
+    }
+    if (PointInRect(m, {x + 138.0f, topY + 374.0f, 130.0f, 26.0f})) {
+        commitEditField(world, state);
+        state.showProfiler = !state.showProfiler;
+        return;
+    }
 
-    // 3 отдельные кнопки глобального режима трассеров: [ Нет ] [ По времени ] [ Вечный ]
-    float wTrBtnY = topY + 280.0f;
+    float wTrBtnY = topY + 426.0f;
     if (PointInRect(m, {x, wTrBtnY, 76.0f, 26.0f})) {
         commitEditField(world, state);
         world.defaultTrailMode = 0;
@@ -638,32 +942,17 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         return;
     }
 
-    float sepY = topY + 314.0f;
+    float sepY = topY + 460.0f;
     if (world.defaultTrailMode == 1) {
-        if (CheckInputBoxClick(m, x, topY + 312.0f)) {
+        if (CheckInputBoxClick(m, x, topY + 456.0f)) {
             ActivateInputField(world, state, EditField::WORLD_TRAIL_LIFETIME);
             return;
         }
-        sepY = topY + 368.0f;
+        sepY = topY + 510.0f;
     }
 
-    float labY = sepY + 30.0f;
-    for (int i = 0; i < 4; ++i) {
-        if (PointInRect(m, {x, labY + i * 34.0f, w, 29.0f})) {
-            commitEditField(world, state);
-            world.loadLabPreset(i + 1);
-            state.paused = true;
-            state.selectedBodyId = -1;
-            state.selectedRopeId = -1;
-            state.camPos = {0.0f, 4.3f};
-            state.camZoom = 1.0f;
-            if (i == 3) state.forceViewMode = 1;
-            clearTelemetry(world, state);
-            return;
-        }
-    }
-
-    if (PointInRect(m, {x, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
+    float botRow1 = sepY + 10.0f;
+    if (PointInRect(m, {x, botRow1, 130.0f, 28.0f})) {
         commitEditField(world, state);
         world.setupDefaultScene();
         state.paused = true;
@@ -672,11 +961,31 @@ void InputHandler::handleInspector(PhysicsWorld& world, AppState& state, int scr
         clearTelemetry(world, state);
         return;
     }
-    if (PointInRect(m, {x + 138.0f, labY + 4 * 34.0f + 6.0f, 130.0f, 28.0f})) {
+    if (PointInRect(m, {x + 138.0f, botRow1, 130.0f, 28.0f})) {
         commitEditField(world, state);
         world.clearScene();
         state.paused = true;
         clearTelemetry(world, state);
+        return;
+    }
+
+    float botRow2 = botRow1 + 34.0f;
+    if (PointInRect(m, {x, botRow2, 130.0f, 28.0f})) {
+        commitEditField(world, state);
+        if (world.saveSceneToFile("saved_scene.mec")) {
+            showStatus(state, "Сцена сохранена в saved_scene.mec");
+        }
+        return;
+    }
+    if (PointInRect(m, {x + 138.0f, botRow2, 130.0f, 28.0f})) {
+        commitEditField(world, state);
+        if (world.loadSceneFromFile("saved_scene.mec")) {
+            state.paused = true;
+            state.selectedBodyId = -1;
+            state.selectedRopeId = -1;
+            clearTelemetry(world, state);
+            showStatus(state, "Сцена загружена из saved_scene.mec");
+        }
         return;
     }
 
@@ -724,6 +1033,31 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
     if (IsKeyPressed(KEY_H)) {
         state.hideAllBodies = !state.hideAllBodies;
     }
+    if (IsKeyPressed(KEY_C)) {
+        state.showCenterOfMass = !state.showCenterOfMass;
+    }
+    if (IsKeyPressed(KEY_F3)) {
+        state.showProfiler = !state.showProfiler;
+    }
+    if (IsKeyPressed(KEY_E)) {
+        if (exportTelemetryCSV(state, "telemetry_export.csv")) {
+            showStatus(state, "Экспорт CSV: telemetry_export.csv сохранён!");
+        }
+    }
+    if (IsKeyPressed(KEY_F5)) {
+        if (world.saveSceneToFile("saved_scene.mec")) {
+            showStatus(state, "Сцена сохранена в saved_scene.mec");
+        }
+    }
+    if (IsKeyPressed(KEY_F9)) {
+        if (world.loadSceneFromFile("saved_scene.mec")) {
+            state.paused = true;
+            state.selectedBodyId = -1;
+            state.selectedRopeId = -1;
+            clearTelemetry(world, state);
+            showStatus(state, "Сцена загружена из saved_scene.mec");
+        }
+    }
     if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
         if (state.selectedBodyId >= 0) {
             int id = state.selectedBodyId;
@@ -759,11 +1093,14 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
             state.activeTool = ToolType::ADD_SPRING;
             state.ropeStartBodyId = -1;
             state.addMenuOpen = false;
+        } else if (IsKeyPressed(KEY_SIX)) {
+            state.activeTool = ToolType::ADD_PULLEY;
+            state.ropeStartBodyId = -1;
+            state.addMenuOpen = false;
         } else if (IsKeyPressed(KEY_ESCAPE)) {
             state.addMenuOpen = false;
         }
     } else {
-        // Шорткаты нижнего дока: [1] Курсор, [2] Создать, [3] Осциллограф, [4] Глазик, [5] Удалить
         if (IsKeyPressed(KEY_ONE)) {
             state.activeTool = ToolType::SELECT_MOVE;
             state.ropeStartBodyId = -1;
@@ -777,16 +1114,30 @@ void InputHandler::handleKeyboardInput(PhysicsWorld& world, AppState& state) {
             state.activeTool = ToolType::DELETE_OBJ;
             state.ropeStartBodyId = -1;
         } else if (IsKeyPressed(KEY_ESCAPE)) {
-            state.ropeStartBodyId = -1;
-            state.creatingSupportBodyId = -1;
-            state.activeTool = ToolType::SELECT_MOVE;
-            state.selectedBodyId = -1;
-            state.selectedRopeId = -1;
+            if (state.selectedBodyId != -1 || state.selectedRopeId != -1 || state.activeTool != ToolType::SELECT_MOVE) {
+                state.ropeStartBodyId = -1;
+                state.creatingSupportBodyId = -1;
+                state.activeTool = ToolType::SELECT_MOVE;
+                state.selectedBodyId = -1;
+                state.selectedRopeId = -1;
+            } else {
+                state.paused = true;
+                state.screen = (state.screen == AppScreen::STUDY_LAB) ? AppScreen::STUDY_HUB : AppScreen::MAIN_MENU;
+            }
         }
     }
 }
 
-void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float /*ppm*/) {
+void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int screenH, float) {
+    if (state.statusTimer > 0.0f) {
+        state.statusTimer = std::max(0.0f, state.statusTimer - GetFrameTime());
+    }
+
+    if (state.screen != AppScreen::SANDBOX && state.screen != AppScreen::STUDY_LAB) {
+        handleMenuScreens(world, state, screenW, screenH);
+        return;
+    }
+
     float canvasWidth = (float)(screenW - INSPECTOR_WIDTH);
     float centerX = canvasWidth * 0.5f;
     float centerY = screenH * 0.5f;
@@ -983,6 +1334,32 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                     }
                     break;
                 }
+                case ToolType::ADD_PULLEY: {
+                    if (state.ropeStartBodyId == -1) {
+                        if (state.hoveredBodyId != -1 && !world.bodies[state.hoveredBodyId].isStatic) {
+                            state.ropeStartBodyId = state.hoveredBodyId;
+                            state.ropeStartOffset = world.getSnapOffset(state.hoveredBodyId, state.mouseWorldPos);
+                        }
+                    } else {
+                        if (state.hoveredBodyId != -1 && state.hoveredBodyId != state.ropeStartBodyId && !world.bodies[state.hoveredBodyId].isStatic) {
+                            Vec2 snapB = world.getSnapOffset(state.hoveredBodyId, state.mouseWorldPos);
+                            Vec2 pA = world.bodies[state.ropeStartBodyId].localToWorld(state.ropeStartOffset);
+                            Vec2 pB = world.bodies[state.hoveredBodyId].localToWorld(snapB);
+                            float wheelY = std::max(pA.y, pB.y) + 2.2f;
+                            float wheelX = (pA.x + pB.x) * 0.5f;
+                            float wheelR = std::clamp(std::abs(pB.x - pA.x) * 0.5f, 0.55f, 2.2f);
+                            Vec2 wheelPos = {wheelX, wheelY};
+                            float lenA = (pA - Vec2{wheelX - wheelR, wheelY}).length();
+                            float lenB = (pB - Vec2{wheelX + wheelR, wheelY}).length();
+                            world.addPulley(state.ropeStartBodyId, state.hoveredBodyId,
+                                            state.ropeStartOffset, snapB, wheelPos, wheelR, lenA + lenB);
+                            state.ropeStartBodyId = -1;
+                            world.updateStaticTelemetry();
+                            world.saveSnapshot();
+                        }
+                    }
+                    break;
+                }
                 case ToolType::DELETE_OBJ: {
                     if (state.hoveredBodyId != -1) {
                         if (state.selectedBodyId == state.hoveredBodyId) state.selectedBodyId = -1;
@@ -993,6 +1370,14 @@ void InputHandler::update(PhysicsWorld& world, AppState& state, int screenW, int
                         if (state.selectedRopeId == state.hoveredRopeId) state.selectedRopeId = -1;
                         world.removeRope(state.hoveredRopeId);
                         world.saveSnapshot();
+                    } else {
+                        for (const auto& p : world.pulleys) {
+                            if (Vec2::dist(state.mouseWorldPos, p.wheelPos) <= p.radius + 0.25f) {
+                                world.removePulley(p.id);
+                                world.saveSnapshot();
+                                break;
+                            }
+                        }
                     }
                     break;
                 }
